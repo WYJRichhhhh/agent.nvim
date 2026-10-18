@@ -14,7 +14,7 @@ export class GitReview {
   constructor(cwd, options, emit) {
     this.cwd = cwd; this.options = options; this.emit = emit;
     this.roots = []; this.baseline = new Map(); this.seen = new Map(); this.bytes = 0;
-    this.turnId = null; this.queue = Promise.resolve(); this.notice = new Set(); this.closed = false; this.candidates = new Map(); this.heads = new Map(); this.excluded = new Set();
+    this.turnId = null; this.queue = Promise.resolve(); this.notice = new Set(); this.closed = false; this.candidates = new Map(); this.heads = new Map(); this.excluded = new Set(); this.bases = new Map(); this.reported = new Set();
   }
   async git(root, args, extra = {}) {
     return (await exec('git', ['-c','core.fsmonitor=false','-C', root, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, ...extra })).stdout;
@@ -67,9 +67,16 @@ export class GitReview {
       return value;
     } catch (error) { if (error.code === 'ENOENT') return null; return undefined; }
   }
-  async committed(root, relative) {
+  async freezeBase(root, commit) {
+    if (this.bases.has(root)) return;
+    const tracked = commit
+      ? new Set((await this.git(root,['ls-tree','-rz','--name-only',commit])).split('\0').filter(Boolean))
+      : new Set();
+    this.bases.set(root,{commit,tracked});
+  }
+  async committed(root, relative, commit) {
     try {
-      const value = await this.git(root,['show',`HEAD:${relative}`],{encoding:'buffer',maxBuffer:this.options.max_diff_bytes});
+      const value = await this.git(root,['show',`${commit}:${relative}`],{encoding:'buffer',maxBuffer:this.options.max_diff_bytes});
       return value.includes(0) ? undefined : value;
     } catch { return undefined; }
   }
@@ -83,11 +90,16 @@ export class GitReview {
     return true;
   }
   async snapshot() {
-    this.baseline.clear(); this.seen.clear(); this.bytes = 0; this.notice.clear(); this.candidates.clear(); this.heads.clear(); this.excluded.clear();
+    this.baseline.clear(); this.seen.clear(); this.bytes = 0; this.notice.clear(); this.candidates.clear(); this.heads.clear(); this.excluded.clear(); this.bases.clear(); this.reported.clear();
     for (const root of await this.discover()) {
-      try { this.heads.set(root,(await this.git(root,['rev-parse','HEAD'])).trim()); } catch {}
-      this.candidates.set(root,new Set(await this.dirty(root)));
-      for (const relative of await this.paths(root)) {
+      let head; try { head=(await this.git(root,['rev-parse','HEAD'])).trim(); } catch {}
+      this.heads.set(root,head);
+      await this.freezeBase(root,head);
+      const dirty = new Set(await this.dirty(root));
+      this.candidates.set(root,dirty);
+      // Clean tracked files are recoverable from the frozen commit. Snapshot only
+      // existing dirty/untracked contents, not every copy in every worktree.
+      for (const relative of dirty) {
         if (this.closed) return;
         const value = await this.read(root,relative);
         const key=root+'\0'+relative;
@@ -129,19 +141,24 @@ export class GitReview {
     // preserve that baseline rather than snapshotting after the write.
     if (!this.turnId) this.turnId = turnId;
     if (this.turnId !== turnId) return;
-    const oldRoots = new Set(this.roots);
     const roots = await this.discover();
     const changes = [];
     for (const root of roots) {
       const files=this.candidates.get(root) ?? new Set();
       for(const relative of await this.dirty(root)) files.add(relative);
       let head; try { head=(await this.git(root,['rev-parse','HEAD'])).trim(); } catch {}
-      if(oldRoots.has(root) && head!==this.heads.get(root)) {
-        for(const relative of await this.paths(root)) files.add(relative);
-        for(const key of this.baseline.keys()) if(key.startsWith(root+'\0')) files.add(key.slice(root.length+1));
+      const knownHead=this.heads.has(root);
+      await this.freezeBase(root,head);
+      if(knownHead && head!==this.heads.get(root)) {
+        const previous=this.heads.get(root);
+        const changed=previous && head
+          ? (await this.git(root,['diff','--no-ext-diff','--no-textconv','--no-renames','--name-only','-z',previous,head,'--'])).split('\0').filter(Boolean)
+          : await this.paths(root);
+        for(const relative of changed) files.add(relative);
       }
+      this.heads.set(root,head);
       this.candidates.set(root,files);
-      const committedPaths=oldRoots.has(root) ? null : new Set((await this.git(root,['ls-tree','-rz','--name-only','HEAD'])).split('\0'));
+      const base=this.bases.get(root);
       for (const relative of files) {
         if (this.closed) return;
         const key=root+'\0'+relative;
@@ -151,7 +168,7 @@ export class GitReview {
         if (!this.baseline.has(key)) {
           // New worktrees may be created and edited in one shell command. Their
           // committed content is the baseline; new untracked files start absent.
-          const before=committedPaths?.has(relative) ? await this.committed(root,relative) : null;
+          const before=base.tracked.has(relative) ? await this.committed(root,relative,base.commit) : null;
           if (before===undefined) {this.excluded.add(key);continue;}
           if (!this.remember(key,before)) continue;
         }
@@ -160,11 +177,15 @@ export class GitReview {
         this.seen.set(key,hash);
         const before=this.baseline.get(key);
         if (fingerprint(before)===hash) {
-          changes.push({path:path.join(root,relative),kind:{type:'update'},diff:'',reverted:true});
+          if(this.reported.has(key)) {
+            changes.push({path:path.join(root,relative),kind:{type:'update'},diff:'',reverted:true});
+            this.reported.delete(key);
+          }
           continue;
         }
         const diff=await this.patch(root,relative,before,after);
         if (!diff) continue;
+        this.reported.add(key);
         changes.push({path:path.join(root,relative),kind:{type:before===null?'add':after===null?'delete':'update'},diff});
       }
     }

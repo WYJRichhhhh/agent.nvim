@@ -71,7 +71,7 @@ opts = {
 | `<leader>ah` | `:Agent turns` | 选择当前插件会话内的历史轮次 |
 | `<leader>an` / `<leader>ap` | `:Agent next` / `:Agent prev` | 在源文件中跳到下一处/上一处修改 |
 
-成功修改文件后，原编辑窗口打开该文件：新增行使用 `DiffAdd` 绿色背景，删除内容以 `DiffDelete` 红色虚拟行显示，不写入源文件。焦点留在 Codex，方便继续输入。建议使用右侧分屏；浮窗可能遮住代码。
+成功修改文件后，原编辑窗口打开该文件：新增行使用 `DiffAdd` 绿色背景，删除内容以 `DiffDelete` 红色虚拟行显示，不写入源文件。批量事件只打开最后一个目标，完整清单仍保留；焦点留在 Codex，方便继续输入。建议使用右侧分屏；浮窗可能遮住代码。
 
 进入代码窗口、切换文件或开始编辑时会**自动暂停跟随**，避免抢走你的操作。`:Agent follow` 切换跟随状态；`:Agent pause` 明确暂停。任何未保存的 buffer 都不会被自动替换或重新加载；保存后再恢复跟随。未修改的已打开文件可以自动重新加载，保留原有 `autoread` 配置。
 
@@ -81,7 +81,7 @@ opts = {
 
 直接消费官方 App Server 的 `fileChange` 和 `turn/diff/updated` 事件，不解析 TUI 文本。列表只记录成功的文件修改，尚未批准、失败和被拒绝的修改不会混入。对比基准由 Codex 该轮记录的修改决定，不直接对比 Git HEAD，因此不会自动把开始任务前已有的全部改动算进去。
 
-Git 项目默认启用 `review.git_fallback`：在任务开始时记录本地工作内容，在工具完成和整轮结束后检查差异，补上 Ruby/Python/shell/格式化器等未产生原生事件的写入，列表标记 `[Git]`。对比任务开始前的实际内容，避免直接混入已有修改；任务中新建 worktree 则以其提交内容建立初始基线。它无法证明具体是谁写入文件：并发保存的其他编辑也可能被收集。忽略文件、二进制文件、超大文件和超出快照预算的文件不在兜底范围；提交前仍应检查 `git diff`。超过 `review.max_diff_bytes` 的大补丁会跳过并提示。默认只打开启动目录及同一 Git 项目已注册的 worktree 中的文件；`review.worktrees = false` 可关闭跨 worktree 支持，任意外部路径和符号链接目标仍会检查。
+Git 项目默认启用 `review.git_fallback`：在任务开始时记录本地工作内容，在工具完成和整轮结束后检查差异，补上 Ruby/Python/shell/格式化器等未产生原生事件的写入，列表标记 `[Git]`。保存任务前已有未提交/未跟踪内容，干净文件使用固定提交基线，不逐个复制进快照，避免直接混入已有修改；任务中新建 worktree 则以其提交内容建立初始基线。它无法证明具体是谁写入文件：并发保存的其他编辑也可能被收集。忽略文件、二进制文件、超大文件和超出快照预算的文件不在兜底范围；提交前仍应检查 `git diff`。超过 `review.max_diff_bytes` 的大补丁会跳过并提示。默认只打开启动目录及同一 Git 项目已注册的 worktree 中的文件；`review.worktrees = false` 可关闭跨 worktree 支持，任意外部路径和符号链接目标仍会检查。
 
 协议参考：[Codex App Server](https://learn.chatgpt.com/docs/app-server)、[CLI 命令](https://learn.chatgpt.com/docs/developer-commands?surface=cli)。
 

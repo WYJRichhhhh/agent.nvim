@@ -149,6 +149,29 @@ local ok, err = xpcall(function()
         assert(review.status().turns == 0)
         vim.ui.select = original
     end)
+    check("批量修改仅加载最后一个目标，避免为全部文件启动 LSP", function()
+        vim.api.nvim_set_current_win(agentwin)
+        attach()
+        local changes = {}
+        for i = 1, 20 do
+            local file = root .. "/batch-" .. i .. ".txt"
+            vim.fn.writefile({ "new content" }, file)
+            changes[#changes + 1] =
+                { path = file, kind = { type = "update" }, diff = "@@ -1 +1 @@\n-old\n+new content\n" }
+        end
+        local item = { id = "batch", type = "fileChange", status = "completed", changes = changes }
+        review.event("item/completed", { turnId = "batch-turn", item = item })
+        local loaded = 0
+        for _, change in ipairs(changes) do
+            local buf = vim.fn.bufnr(change.path)
+            if buf ~= -1 and vim.api.nvim_buf_is_loaded(buf) then
+                loaded = loaded + 1
+            end
+        end
+        assert(loaded == 1, "batch loaded " .. loaded .. " buffers")
+        assert(review.status().files == 20)
+        assert(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(editor)) == changes[#changes].path)
+    end)
     check("多 hunk 及删除文件可解析，停止清理高亮", function()
         local hunks = review.hunks("@@ -1 +0,0 @@\n-gone\n@@ -4,0 +4 @@\n+new\n")
         assert(#hunks == 2 and #hunks[1].deleted == 1 and hunks[2].added[1] == 4)

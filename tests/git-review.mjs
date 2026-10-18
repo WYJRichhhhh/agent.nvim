@@ -64,3 +64,36 @@ test('a shell write followed by a commit is detected even when Git status is cle
  await git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','script update');
  await review.scan('commit-turn');assert.ok(changes(events).some(change=>change.diff.includes('+committed by shell')));
 }));
+
+test('a registered nested worktree not ignored by its parent is not thousands of new files',async()=>fixture(async({root,git,review,events})=>{
+ await fs.writeFile(path.join(root,'.gitignore'),'');await git('add','.gitignore');
+ await git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','do not ignore worktrees');
+ await review.snapshot();await review.begin('nested-turn');
+ const tree=path.join(root,'.worktrees','nested');await git('worktree','add','--detach',tree,'HEAD');
+ await fs.writeFile(path.join(tree,'doc.md'),'only this document changed\n');
+ await review.scan('nested-turn');
+ const edits=changes(events).filter(change=>!change.reverted);
+ assert.equal(edits.length,1,JSON.stringify(edits.map(change=>({path:change.path,kind:change.kind})),null,2));
+ assert.equal(edits[0].kind.type,'update');assert.match(edits[0].diff,/-original/);
+}));
+
+test('repeated scans of a new worktree do not turn untouched tracked files into additions',async()=>fixture(async({root,git,review,events})=>{
+ await review.snapshot();await review.begin('repeat-worktree-turn');
+ const tree=path.join(root,'.worktrees','repeated');await git('worktree','add','--detach',tree,'HEAD');
+ await fs.writeFile(path.join(tree,'doc.md'),'one real edit\n');await review.scan('repeat-worktree-turn');
+ assert.equal(changes(events).filter(c=>!c.reverted).length,1);
+ await review.scan('repeat-worktree-turn');
+ const edits=changes(events).filter(c=>!c.reverted);
+ assert.equal(edits.length,1,JSON.stringify(edits.map(c=>({path:c.path,kind:c.kind}))));
+ await fs.writeFile(path.join(tree,'.gitignore'),'new ignore rule\n');await review.scan('repeat-worktree-turn');
+ const last=changes(events).at(-1);assert.equal(last.kind.type,'update','later edits to existing files must not be additions');
+}));
+
+test('clean tracked files use committed baselines without exhausting the working snapshot budget',async()=>fixture(async({root,git,review,events})=>{
+ for(let i=0;i<20;i++)await fs.writeFile(path.join(root,'asset-'+i+'.txt'),'clean tracked content\n'.repeat(100));
+ await git('add','.');await git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','clean assets');
+ const boundedEvents=[];const bounded=new GitReview(root,{...options,max_snapshot_bytes:64},e=>boundedEvents.push(e));
+ await bounded.snapshot();assert.ok(!boundedEvents.some(e=>e.type==='warning'),'clean files consumed snapshot budget');
+ await fs.writeFile(path.join(root,'doc.md'),'real edit after clean snapshot\n');await bounded.scan('lazy-turn');
+ assert.match(changes(boundedEvents)[0].diff,/-original\n\+real edit/);bounded.close();
+}));

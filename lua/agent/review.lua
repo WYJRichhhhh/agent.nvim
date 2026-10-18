@@ -350,6 +350,7 @@ function M.event(method, params)
         if is_current then
             state.latest = round.id
         end
+        local follow_entry
         for _, change in ipairs(item.changes or {}) do
             if
                 type(change.diff) == "string"
@@ -399,10 +400,14 @@ function M.event(method, params)
                         state.current = entry
                     end
                     if state.follow and is_current then
-                        open_file(entry, false)
+                        follow_entry = entry
                     end
                 end
             end
+        end
+        -- Batch metadata must not load every file and start one LSP pipeline per buffer.
+        if follow_entry and state.follow then
+            open_file(follow_entry, false)
         end
     end
     refresh()

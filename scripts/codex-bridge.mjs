@@ -146,7 +146,7 @@ async function start(options) {
       emit({ type: 'event', method, params: {...params, turnId: params.turnId ?? params.turn?.id} });
     }
   });
-  await rpc('initialize', {clientInfo:{name:'agent_nvim',title:'agent.nvim',version:'0.3.0'}});
+  await rpc('initialize', {clientInfo:{name:'agent_nvim',title:'agent.nvim',version:'0.3.1'}});
   ws.send(JSON.stringify({method:'initialized'}));
   if (options.review?.git_fallback || options.review?.worktrees) {
     gitReview=new GitReview(options.cwd,options.review,emit);

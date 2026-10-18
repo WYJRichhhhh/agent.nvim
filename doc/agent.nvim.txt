@@ -1,0 +1,39 @@
+*agent.nvim.txt*  在 Neovim 中管理本地 AI CLI 的单会话终端
+
+要求 Neovim 0.11 或更新版本。插件不管理密钥，使用本机 CLI 的登录状态。
+
+命令                                                    *:Agent*
+    :Agent                  启动、聚焦或隐藏会话
+    :Agent start [backend]  明确启动新会话，拒绝替换正在运行的会话
+    :Agent resume [backend] 恢复历史对话；Codex 使用 codex resume，需先退出 CLI
+    :Agent open [backend]   显示已有会话，没有会话时启动
+    :Agent hide             隐藏窗口，进程继续运行
+    :Agent toggle           按窗口可见性切换
+    :Agent focus            不在 Agent 时聚焦，已经聚焦时隐藏
+    :Agent select           选择后端；选回当前项聚焦，选其他项后确认停止并切换
+    :Agent stop             停止进程并清理 buffer
+    :Agent status           查看后端、目录、job 和显示状态
+    :Agent health           加载插件后检查版本与后端可执行文件
+
+配置                                                    *agent.nvim-setup*
+>
+    require('agent').setup({
+        backend = 'auto',
+        cwd = function() return vim.fn.getcwd() end,
+        window = {
+            layout = 'float', width = 0.85, height = 0.85,
+            border = 'rounded',
+        },
+        terminal = { start_insert = true, hide_key = false },
+    })
+<
+默认不设置全局快捷键。可以在用户配置中为 focus() 绑定普通和终端模式的键。
+
+生命周期                                                *agent.nvim-session*
+    每个 Neovim 实例只有一个会话。隐藏不停止，重新显示不另开进程。
+    cwd 在首次启动时绑定，后续 :cd 不改变已启动会话。
+    CLI 退出后保留输出，使用 :Agent start 明确重新启动。
+    退出 Neovim 会结束会话。跨进程恢复由 CLI 自身能力负责。
+    注册后端、详细配置和测试方式见插件 README.md。
+
+vim:tw=78:ts=4:ft=help:norl:

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.sw[a-p]
+nvim.log
+doc/tags
+.DS_Store

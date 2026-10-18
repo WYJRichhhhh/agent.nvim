@@ -13,7 +13,7 @@ M.defaults = {
         border = "rounded",
         winhighlight = "Normal:AgentNormal,NormalNC:AgentNormal,NormalFloat:AgentNormal,FloatBorder:AgentBorder,FloatTitle:AgentTitle",
     },
-    terminal = { start_insert = true, hide_key = false },
+    terminal = { start_insert = true, hide_key = false, show_hint = true },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
@@ -65,6 +65,7 @@ function M.resolve(opts)
     end
     assert(type(result.window.winhighlight) == "string", "winhighlight 必须是字符串")
     assert(type(result.terminal.start_insert) == "boolean", "start_insert 必须是布尔值")
+    assert(type(result.terminal.show_hint) == "boolean", "show_hint 必须是布尔值")
     local hide_key = result.terminal.hide_key
     assert(hide_key == false or type(hide_key) == "string", "hide_key 必须是字符串或 false")
     for name, backend in pairs(result.backends) do

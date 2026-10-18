@@ -5,6 +5,7 @@ local window = require("agent.window")
 local session, selected, selecting
 local generation = 0
 local installed = false
+local hint_shown = false
 
 local function warn(message)
     vim.notify(message, vim.log.levels.WARN, { title = "Agent" })
@@ -100,6 +101,7 @@ local function launch(name, cwd, command_override)
     current.job_id, current.state = job, "running"
     vim.bo[current.bufnr].filetype = "agent_terminal"
     vim.keymap.set("n", "q", M.hide, { buffer = current.bufnr, desc = "隐藏 Agent，会话继续运行" })
+    vim.keymap.set("n", "?", M.help, { buffer = current.bufnr, desc = "Agent 操作帮助" })
     if config.options.terminal.hide_key and config.options.terminal.hide_key ~= "" then
         vim.keymap.set(
             { "n", "t" },
@@ -110,6 +112,14 @@ local function launch(name, cwd, command_override)
     end
     if config.options.terminal.start_insert then
         vim.cmd.startinsert()
+    end
+    if config.options.terminal.show_hint and not hint_shown then
+        hint_shown = true
+        vim.notify(
+            "Ctrl-\\ Ctrl-n 后：q 隐藏，? 帮助；:Agent select 切换；:Agent stop 停止。",
+            vim.log.levels.INFO,
+            { title = "Agent · 操作提示" }
+        )
     end
     emit("AgentStart", current)
 end
@@ -359,6 +369,11 @@ function M.select()
             end
         end)
     end)
+end
+
+function M.help()
+    vim.cmd.stopinsert()
+    vim.cmd.help("agent.nvim")
 end
 
 function M.status()

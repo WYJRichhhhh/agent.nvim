@@ -12,6 +12,12 @@ Repeatedly opening terminal windows can scatter CLI sessions or accidentally ter
 
 It is a terminal host, not an AI API client. It does not choose models, implement agent tools, install CLIs or create another authentication system.
 
+### In-terminal help and closing
+
+Run `:Agent help` (or `:help agent.nvim`) for the operation guide. While typing into the CLI, press **Ctrl-\ then Ctrl-n** first to enter terminal Normal mode: `q` hides the window, `?` opens help, and `i` returns to CLI input. Close the help window with `:q` and use `:Agent open` to return. These local `q` / `?` mappings do not intercept CLI input.
+
+**Hide** with `Alt-a` (when configured), `q`, or `:Agent hide` to keep the task and unfinished input. **Stop** with `:Agent stop` to terminate the process. To switch, use `:Agent select`; in terminal Normal mode the example `<leader>as` mapping also works. Choosing another backend requires confirmation and ends the old process. The first successful launch shows a brief hint once per Neovim; set `terminal.show_hint = false` to disable it.
+
 ## Who can use it?
 
 - Neovim users who already have a working `claude`, `codex` or another interactive CLI.

@@ -3,7 +3,7 @@ if vim.g.loaded_agent_nvim then
 end
 vim.g.loaded_agent_nvim = true
 
-local actions = { "open", "hide", "toggle", "focus", "start", "resume", "stop", "select", "status", "health" }
+local actions = { "open", "hide", "toggle", "focus", "start", "resume", "stop", "select", "status", "health", "help" }
 vim.api.nvim_create_user_command("Agent", function(args)
     local action, backend = args.fargs[1] or "focus", args.fargs[2]
     if
@@ -12,7 +12,7 @@ vim.api.nvim_create_user_command("Agent", function(args)
         or (backend and action ~= "start" and action ~= "open" and action ~= "resume")
     then
         vim.notify(
-            "用法：:Agent [open|hide|toggle|focus|start|resume|stop|select|status|health] [backend]",
+            "用法：:Agent [open|hide|toggle|focus|start|resume|stop|select|status|health|help] [backend]",
             vim.log.levels.WARN
         )
         return

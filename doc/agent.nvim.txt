@@ -1,21 +1,54 @@
-*agent.nvim.txt*  在 Neovim 中管理本地 AI CLI 的单会话终端
+*agent.nvim.txt*  本地 AI CLI 的单会话终端                     *agent.nvim*
 
-要求 Neovim 0.11 或更新版本。插件不管理密钥，使用本机 CLI 的登录状态。
+要求 Neovim 0.11+。CLI 负责登录、模型和历史；插件负责终端窗口与进程。
 
-命令                                                    *:Agent*
-    :Agent                  启动、聚焦或隐藏会话
-    :Agent start [backend]  明确启动新会话，拒绝替换正在运行的会话
-    :Agent resume [backend] 恢复历史对话；Codex 使用 codex resume，需先退出 CLI
+快速操作                                               *agent.nvim-quickstart*
+
+在 Agent 中输入时，按键会发送给 CLI。要执行 Neovim 命令，先依次按：
+    Ctrl-\，Ctrl-n        退出终端输入模式，进入终端普通模式
+然后可以：
+    q                     隐藏窗口，保留进程、任务和未提交输入
+    ?                     打开本帮助
+    i                     返回 CLI 输入模式
+    :Agent select         打开后端菜单，切换 Claude Code / Codex
+    :Agent stop           停止 CLI 进程并删除终端 buffer
+
+关闭帮助窗口用 :q；再执行 :Agent open 回到原会话，按 i 继续输入。
+普通模式下 :Agent hide 也可以隐藏窗口。直接关闭 Agent 窗口通常保留会话；
+删除终端 buffer（如 :bd!）会结束进程。退出 Neovim 也会结束会话。
+不要把 Ctrl-c 当作隐藏键：它会发送给 CLI，可能中断当前任务。
+
+插件没有默认全局快捷键。README 的 lazy.nvim 示例配置了：
+    <leader>aa            打开/聚焦；已聚焦时隐藏（普通模式）
+    Alt-a                 打开/聚焦/隐藏（普通模式和终端输入模式）
+    <leader>as            打开后端选择菜单（普通模式）
+在 CLI 输入时要用 <leader>as，先按 Ctrl-\，Ctrl-n。
+这些映射需由用户配置；<leader> 的实际按键取决于个人配置。
+
+切换后端                                               *agent.nvim-switch*
+
+执行 :Agent select，选择菜单中的另一个后端，然后确认停止并切换。
+选择当前后端只聚焦已有会话；取消确认保留进程与未提交输入。
+确认后停止旧 CLI，再启动新 CLI：当前任务和未提交输入会中断。
+每个 Neovim 只有一个会话，切回旧后端不会自动恢复旧进程或历史对话。
+只显示已注册且命令可执行的后端；缺少选项时运行 :Agent health 检查 PATH。
+Alt-a 只负责显示/隐藏，不会重新弹出后端菜单。
+
+命令                                                   *:Agent*
+    :Agent                  同 :Agent focus
+    :Agent help             打开本帮助
+    :Agent start [backend]  明确启动新会话；拒绝替换运行中的会话
+    :Agent resume [backend] 恢复历史；Codex 使用 codex resume，需先退出 CLI
     :Agent open [backend]   显示已有会话，没有会话时启动
     :Agent hide             隐藏窗口，进程继续运行
     :Agent toggle           按窗口可见性切换
     :Agent focus            不在 Agent 时聚焦，已经聚焦时隐藏
-    :Agent select           选择后端；选回当前项聚焦，选其他项后确认停止并切换
+    :Agent select           选择后端，切换运行中的后端前要求确认
     :Agent stop             停止进程并清理 buffer
     :Agent status           查看后端、目录、job 和显示状态
-    :Agent health           加载插件后检查版本与后端可执行文件
+    :Agent health           检查版本与后端可执行文件
 
-配置                                                    *agent.nvim-setup*
+配置                                                   *agent.nvim-setup*
 >
     require('agent').setup({
         backend = 'auto',
@@ -24,16 +57,23 @@
             layout = 'float', width = 0.85, height = 0.85,
             border = 'rounded',
         },
-        terminal = { start_insert = true, hide_key = false },
+        terminal = {
+            start_insert = true,
+            hide_key = false, -- 可设为 '<M-a>'，仅在 Agent buffer 生效
+            show_hint = true, -- 每个 Neovim 实例首次启动显示操作提示
+        },
     })
 <
-默认不设置全局快捷键。可以在用户配置中为 focus() 绑定普通和终端模式的键。
+默认只有终端普通模式下的 q 和 ? 局部映射，不占用 CLI 输入中的 q 或 ?。
+关闭首次提示可设置 terminal.show_hint = false；仍可随时 :Agent help。
 
-生命周期                                                *agent.nvim-session*
-    每个 Neovim 实例只有一个会话。隐藏不停止，重新显示不另开进程。
-    cwd 在首次启动时绑定，后续 :cd 不改变已启动会话。
-    CLI 退出后保留输出，使用 :Agent start 明确重新启动。
-    退出 Neovim 会结束会话。跨进程恢复由 CLI 自身能力负责。
-    注册后端、详细配置和测试方式见插件 README.md。
+生命周期                                               *agent.nvim-session*
+    隐藏和重新显示复用同一个进程与终端 buffer。
+    cwd 在启动时绑定，后续 :cd/:lcd/:tcd 不改变已有进程的目录。
+    CLI 退出后保留输出，:Agent start 明确重新启动。
+    停止或退出 Neovim 后，历史恢复取决于 CLI 自身的持久化能力。
+    同后端 :Agent resume 优先沿用原启动目录。
+    插件直接执行命令参数数组，不启动 shell、不读取 shell rc 或别名。
+    注册后端、环境变量与详细配置见 README.md / README.zh-CN.md。
 
 vim:tw=78:ts=4:ft=help:norl:

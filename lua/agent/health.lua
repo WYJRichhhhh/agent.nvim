@@ -30,6 +30,13 @@ function M.check()
         else
             vim.health.error("Codex bridge 找不到 Node.js: " .. node)
         end
+        if require("agent.config").options.review.git_fallback then
+            if vim.fn.executable("git") == 1 then
+                vim.health.ok("Git fallback 可用")
+            else
+                vim.health.warn("找不到 git；脚本写入兜底不可用，仍可接收原生修改事件")
+            end
+        end
         vim.health.info(
             "Codex bridge 需要支持 --remote / capability-token 的 CLI；已验证 0.163.0。Claude 不使用 bridge。"
         )

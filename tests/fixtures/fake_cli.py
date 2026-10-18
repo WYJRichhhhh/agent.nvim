@@ -6,6 +6,10 @@ print(f"READY pid={os.getpid()} cwd={os.getcwd()} env={os.getenv('AGENT_TEST_VAL
 print("ARGS:" + " ".join(sys.argv[1:]), flush=True)
 for line in sys.stdin:
     value = line.strip()
+    if value == "SIZE":
+        dimensions = os.get_terminal_size(sys.stdin.fileno())
+        print(f"SIZE:{dimensions.columns}x{dimensions.lines}", flush=True)
+        continue
     if value == "EXIT":
         sys.exit(7)
     print(f"REPLY:{value}", flush=True)

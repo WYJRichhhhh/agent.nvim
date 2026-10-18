@@ -84,6 +84,21 @@ local function turn(id)
     return state.turns[id]
 end
 
+function M.set_roots(roots)
+    if not state or not state.options.worktrees then
+        return
+    end
+    state.roots = {}
+    for _, root in ipairs(roots or {}) do
+        if type(root) == "string" then
+            local real = vim.uv.fs_realpath(root)
+            if real then
+                state.roots[#state.roots + 1] = real
+            end
+        end
+    end
+end
+
 local function path_for(path)
     if type(path) ~= "string" or path == "" or path:find("[%z\r\n]") then
         return
@@ -101,7 +116,16 @@ local function path_for(path)
         real = parent .. "/" .. vim.fs.basename(path)
     end
     local root = state.session.cwd
-    if state.options.restrict_to_cwd and real ~= root and not vim.startswith(real, root:gsub("/+$", "") .. "/") then
+    local allowed = real == root or vim.startswith(real, root:gsub("/+$", "") .. "/")
+    if not allowed and state.options.worktrees then
+        for _, worktree in ipairs(state.roots or {}) do
+            if real == worktree or vim.startswith(real, worktree:gsub("/+$", "") .. "/") then
+                allowed = true
+                break
+            end
+        end
+    end
+    if state.options.restrict_to_cwd and not allowed then
         return
     end
     return real
@@ -281,7 +305,7 @@ local function aggregate(round, diff)
         local path = path_for(part.new or part.old)
         if path then
             for _, entry in pairs(round.files) do
-                if path_for(entry.path) == path then
+                if entry.source ~= "git" and path_for(entry.path) == path then
                     entry.diff = table.concat(part.lines, "\n")
                 end
             end
@@ -319,6 +343,9 @@ function M.event(method, params)
             return
         end
         round.seen[item.id] = true
+        if item.source == "git" then
+            round.has_git = true
+        end
         local is_current = not state.live_turn or state.live_turn == round.id
         if is_current then
             state.latest = round.id
@@ -341,24 +368,39 @@ function M.event(method, params)
                 and #change.diff <= state.options.max_diff_bytes
                 and path_for(changed_path)
             then
-                if not round.files[changed_path] then
-                    round.order[#round.order + 1] = changed_path
-                end
-                local entry = {
-                    path = changed_path,
-                    diff = change.diff,
-                    kind = type(change.kind) == "table" and change.kind.type or change.kind,
-                    turn_id = round.id,
-                }
-                round.files[changed_path] = entry
-                if is_current then
-                    state.last_change = entry
-                end
-                if is_current and (state.follow or not state.current) then
-                    state.current = entry
-                end
-                if state.follow and is_current then
-                    open_file(entry, false)
+                if change.reverted then
+                    round.files[changed_path] = nil
+                    if state.last_change and state.last_change.path == changed_path then
+                        state.last_change = nil
+                    end
+                    round.order = vim.tbl_filter(function(path)
+                        return path ~= changed_path
+                    end, round.order)
+                    if state.current and state.current.path == changed_path then
+                        state.current = nil
+                        clear_marks()
+                    end
+                else
+                    if not round.files[changed_path] then
+                        round.order[#round.order + 1] = changed_path
+                    end
+                    local entry = {
+                        source = item.source or "codex",
+                        path = changed_path,
+                        diff = change.diff,
+                        kind = type(change.kind) == "table" and change.kind.type or change.kind,
+                        turn_id = round.id,
+                    }
+                    round.files[changed_path] = entry
+                    if is_current then
+                        state.last_change = entry
+                    end
+                    if is_current and (state.follow or not state.current) then
+                        state.current = entry
+                    end
+                    if state.follow and is_current then
+                        open_file(entry, false)
+                    end
                 end
             end
         end
@@ -410,7 +452,10 @@ function M.changes(id)
     vim.ui.select(entries, {
         prompt = "Agent 修改（选择打开文件，:Agent diff 查看差异）",
         format_item = function(entry)
-            return (entry.kind or "update") .. "  " .. vim.fn.fnamemodify(entry.path, ":~:.")
+            return (entry.kind or "update")
+                .. (entry.source == "git" and " [Git]" or "")
+                .. "  "
+                .. vim.fn.fnamemodify(entry.path, ":~:.")
         end,
     }, function(entry)
         if state ~= captured or not entry then
@@ -449,17 +494,26 @@ function M.turns()
     end)
 end
 
-function M.diff(value)
+function M.diff(value, root)
     if not state then
         notify("当前会话未启用 Codex 修改跟踪。")
         return
     end
     local round = state.turns[state.view_turn or state.latest]
-    local diff = value or (round and round.diff ~= "" and round.diff)
+    local diff = value or (round and not round.has_git and round.diff ~= "" and round.diff)
     if not diff and round then
         local parts = {}
         for _, path in ipairs(round.order) do
-            parts[#parts + 1] = path .. "\n" .. round.files[path].diff
+            local entry = round.files[path]
+            parts[#parts + 1] = vim.startswith(entry.diff, "diff --git ") and entry.diff
+                or (
+                    "--- "
+                    .. vim.json.encode(entry.kind == "add" and "/dev/null" or path)
+                    .. "\n+++ "
+                    .. vim.json.encode(entry.kind == "delete" and "/dev/null" or path)
+                    .. "\n"
+                    .. entry.diff
+                )
         end
         diff = table.concat(parts, "\n")
     end
@@ -484,6 +538,7 @@ function M.diff(value)
         vim.bo[state.preview].swapfile = false
         vim.b[state.preview].agent_review = true
     end
+    state.preview_root = root or state.session.cwd
     local buf = state.preview
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(diff, "\n", { plain = true }))
@@ -515,14 +570,120 @@ function M.diff(value)
         end
     end, { buffer = buf, desc = "关闭 Agent diff，保留会话" })
     vim.keymap.set("n", "gf", function()
-        if state and state.current then
-            open_file(state.current, true)
+        if not state then
+            return
         end
-    end, { buffer = buf, desc = "打开最近选择的修改文件" })
+        local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        local cursor = vim.api.nvim_win_get_cursor(0)[1]
+        local path, old, first = nil, nil, 1
+        for i = cursor, 1, -1 do
+            if lines[i]:match("^%+%+%+ ") and not path then
+                path = git_path(lines[i]:sub(5))
+            end
+            if lines[i]:match("^%-%-%- ") and not old then
+                old = git_path(lines[i]:sub(5))
+            end
+            if lines[i]:match("^diff %-%-git ") then
+                first = i
+                break
+            end
+        end
+        path = path or old
+        if not path then
+            if state.current then
+                open_file(state.current, true)
+            end
+            return
+        end
+        if not path:match("^/") and not path:match("^%a:[/\\]") then
+            path = state.preview_root .. "/" .. path
+        end
+        local last = #lines
+        for i = cursor + 1, #lines do
+            if lines[i]:match("^diff %-%-git ") then
+                last = i - 1
+                break
+            end
+        end
+        local patch = table.concat(vim.list_slice(lines, first, last), "\n")
+        open_file({ path = path, diff = patch }, true)
+    end, { buffer = buf, desc = "打开 diff 光标所在文件" })
     vim.cmd.stopinsert()
     vim.api.nvim_win_set_buf(win, buf)
     vim.api.nvim_set_current_win(win)
     updating = false
+end
+
+function M.gitdiff()
+    if not state then
+        notify("当前会话未启用修改跟踪。")
+        return
+    end
+    local captured = state
+    local roots = { state.session.cwd }
+    for _, root in ipairs(state.roots or {}) do
+        if not vim.tbl_contains(roots, root) then
+            roots[#roots + 1] = root
+        end
+    end
+    vim.ui.select(
+        roots,
+        { prompt = "Git 工作区差异（含任务开始前已有修改，已跟踪文件）" },
+        function(root)
+            if state ~= captured or not root then
+                return
+            end
+            state.follow = false
+            refresh()
+            local parts, bytes, large = {}, 0, false
+            vim.system({
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                root,
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--text",
+                "HEAD",
+                "--",
+            }, {
+                text = true,
+                timeout = 15000,
+                stdout = function(_, data)
+                    if not data then
+                        return
+                    end
+                    bytes = bytes + #data
+                    if bytes <= captured.options.max_diff_bytes then
+                        parts[#parts + 1] = data
+                    else
+                        large = true
+                    end
+                end,
+            }, function(result)
+                vim.schedule(function()
+                    if state ~= captured then
+                        return
+                    end
+                    if large then
+                        notify("Git diff 超过大小上限，请在终端中查看。")
+                    elseif result.code ~= 0 then
+                        notify("无法读取 Git diff，请确认所选目录是有提交记录的 Git 工作区。")
+                    else
+                        local diff = table.concat(parts)
+                        if diff == "" then
+                            notify("该工作区没有已跟踪文件的差异；未跟踪文件需单独检查。")
+                        else
+                            M.diff(diff, root)
+                        end
+                    end
+                end)
+            end)
+        end
+    )
 end
 
 function M.code()

@@ -89,6 +89,12 @@ function M.show(session)
             vim.api.nvim_win_set_buf(win, session.bufnr)
             vim.wo[win].winbar = ("Agent: %s"):format(label(session))
         end
+        if opts.layout == "right" then
+            vim.wo[win].winfixwidth = true
+        end
+        if opts.layout == "bottom" then
+            vim.wo[win].winfixheight = true
+        end
         vim.wo[win].number = false
         vim.wo[win].relativenumber = false
         vim.wo[win].signcolumn = "no"
@@ -131,8 +137,45 @@ end
 
 function M.resize(session)
     local win = M.find(session)
-    if win and vim.api.nvim_win_get_config(win).relative ~= "" then
+    if not win then
+        return
+    end
+    if vim.api.nvim_win_get_config(win).relative ~= "" then
         vim.api.nvim_win_set_config(win, float_config(session))
+        if session.state == "running" and session.job_id then
+            pcall(vim.fn.jobresize, session.job_id, vim.api.nvim_win_get_width(win), vim.api.nvim_win_get_height(win))
+        end
+        return
+    end
+    local opts = require("agent.config").options.window
+    if opts.layout ~= "right" and opts.layout ~= "bottom" then
+        return
+    end
+    local normal = 0
+    for _, other in ipairs(vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win))) do
+        if vim.api.nvim_win_get_config(other).relative == "" then
+            normal = normal + 1
+        end
+    end
+    -- :only leaves no sibling to give space to; do not split or change focus.
+    if normal < 2 then
+        if session.state == "running" and session.job_id then
+            pcall(vim.fn.jobresize, session.job_id, vim.api.nvim_win_get_width(win), vim.api.nvim_win_get_height(win))
+        end
+        return
+    end
+    local vertical = opts.layout == "right"
+    local total = vertical and vim.o.columns or vim.o.lines
+    local minimum = vertical and vim.o.winminwidth or vim.o.winminheight
+    local amount = math.min(size(vertical and opts.width or opts.height, total), math.max(1, total - minimum - 2))
+    local actual = vertical and vim.api.nvim_win_get_width(win) or vim.api.nvim_win_get_height(win)
+    if actual ~= amount then
+        -- Change the existing split without changing its buffer, focus or process.
+        pcall(vertical and vim.api.nvim_win_set_width or vim.api.nvim_win_set_height, win, amount)
+    end
+    -- Explicitly sync the PTY after split layout settles, so TUIs receive SIGWINCH.
+    if session.state == "running" and session.job_id then
+        pcall(vim.fn.jobresize, session.job_id, vim.api.nvim_win_get_width(win), vim.api.nvim_win_get_height(win))
     end
 end
 

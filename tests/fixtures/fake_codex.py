@@ -12,4 +12,4 @@ print('READY_NATIVE_TUI',flush=True)
 for line in sys.stdin:
     cmd=line.strip()
     if cmd=='quit':break
-    if cmd in ['edit','approve','stats']:print(request(cmd),flush=True)
+    if cmd in ['edit','approve','stats','script','worktree-script']:print(request(cmd),flush=True)

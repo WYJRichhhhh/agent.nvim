@@ -4,10 +4,12 @@ local registry = require("agent.registry")
 local window = require("agent.window")
 local bridge = require("agent.bridge")
 local review = require("agent.review")
+local mouse = require("agent.mouse")
 local session, selected, selecting
 local generation = 0
 local installed = false
 local hint_shown = false
+local resize_generation = 0
 
 local function warn(message)
     vim.notify(message, vim.log.levels.WARN, { title = "Agent" })
@@ -39,6 +41,7 @@ local function discard()
     local old = session
     session = nil
     bridge.stop(old)
+    mouse.release()
     review.close()
     window.hide(old)
     if vim.api.nvim_buf_is_valid(old.bufnr) then
@@ -74,6 +77,7 @@ local function launch(name, cwd, command_override)
     vim.b[current.bufnr].agent_session = true
     -- 终端先取得实际窗口尺寸，再启动 CLI，避免首次绘制只有默认的 80 列。
     window.show(current)
+    mouse.update(current)
     local env = vim.tbl_extend("force", {}, config.options.env, backend.env or {})
     local function spawn_terminal(argv, terminal_env)
         if session ~= current then
@@ -202,6 +206,12 @@ local function ensure_hooks()
     end
     installed = true
     local group = vim.api.nvim_create_augroup("AgentNvim", { clear = true })
+    vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "TermEnter" }, {
+        group = group,
+        callback = function()
+            mouse.update(session)
+        end,
+    })
     vim.api.nvim_create_autocmd("ColorScheme", {
         group = group,
         callback = function()
@@ -212,7 +222,14 @@ local function ensure_hooks()
     vim.api.nvim_create_autocmd("VimResized", {
         group = group,
         callback = function()
-            window.resize(session)
+            resize_generation = resize_generation + 1
+            local generation, current = resize_generation, session
+            -- tmux zoom can produce several resize events while Neovim lays out splits.
+            vim.defer_fn(function()
+                if generation == resize_generation and session == current then
+                    pcall(window.resize, current)
+                end
+            end, 30)
         end,
     })
     vim.api.nvim_create_autocmd("BufWipeout", {
@@ -223,6 +240,7 @@ local function ensure_hooks()
             end
             local old = session
             bridge.stop(old)
+            mouse.release()
             review.close()
             session = nil
             if old.job_id and old.state == "running" then
@@ -234,6 +252,7 @@ local function ensure_hooks()
         group = group,
         callback = function()
             selecting = nil
+            mouse.release()
             bridge.stop(session)
             bridge.wait(session)
             if session and session.job_id then
@@ -247,6 +266,7 @@ end
 function M.setup(opts)
     config.options = config.resolve(opts)
     ensure_hooks()
+    mouse.update(session)
 end
 
 function M.register_backend(name, backend)
@@ -283,6 +303,7 @@ end
 
 function M.hide()
     window.hide(session)
+    mouse.update(session)
 end
 
 function M.toggle()
@@ -411,6 +432,10 @@ function M.select()
             end
         end)
     end)
+end
+
+function M.gitdiff()
+    review.gitdiff()
 end
 
 function M.code()

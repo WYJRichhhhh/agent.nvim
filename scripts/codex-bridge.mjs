@@ -4,14 +4,30 @@ import { createServer } from 'node:net';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { connect } from './websocket.mjs';
+import { GitReview } from './git-review.mjs';
 
 let child, ws, stopping = false, activeThread, binding = 0, seq = 0;
 const requests = new Map();
+let gitReview, scanTimer, currentTurn, pendingTurn, scanQueued = false;
+function scheduleScan(turnId) {
+  if (!gitReview || !gitReview.options.git_fallback || !turnId || (currentTurn && currentTurn!==turnId)) return;
+  pendingTurn=turnId;
+  clearTimeout(scanTimer);
+  scanTimer=setTimeout(()=>{
+    if(scanQueued || !pendingTurn) return;
+    const requested=pendingTurn;pendingTurn=null;scanQueued=true;
+    gitReview.run(async()=>{
+      try { await gitReview.scan(requested); }
+      finally {scanQueued=false;if(pendingTurn)scheduleScan(pendingTurn);}
+    });
+  },150);
+}
 const emit = value => { if (!stopping) process.stdout.write(JSON.stringify(value) + '\n'); };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function shutdown() {
   if (stopping) return;
   stopping = true;
+  clearTimeout(scanTimer); gitReview?.close();
   try { ws?.close(); } catch {}
   if (child?.pid) {
     const kill = signal => {
@@ -55,6 +71,7 @@ async function bind(threadId) {
         const turns = await rpc('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
         const turnId = turns.data?.[0]?.id;
         if (turnId) {
+          scheduleScan(turnId);
           let cursor;
           do {
             const result = await rpc('thread/items/list', { threadId, turnId, limit: 100, ...(cursor ? {cursor} : {}) });
@@ -115,16 +132,26 @@ async function start(options) {
       const thread = params.thread;
       if (thread && thread.id !== activeThread && !thread.ephemeral && !thread.parentThreadId
           && (!thread.threadSource || thread.threadSource === 'user')
-          && !(typeof thread.source === 'object' && thread.source?.subAgent)) void bind(thread.id);
+          && !(typeof thread.source === 'object' && (thread.source?.subAgent || thread.source?.subagent))) void bind(thread.id);
     }
     if (params.threadId !== activeThread) return;
+    const turnId=params.turnId ?? params.turn?.id;
+    if(method==='turn/started') {
+      currentTurn=turnId;
+      if(gitReview?.options.git_fallback) gitReview.run(()=>gitReview.begin(turnId));
+    }
+    if(method==='item/completed' || method==='turn/completed') scheduleScan(turnId ?? currentTurn);
     if (['turn/started', 'turn/completed', 'turn/diff/updated'].includes(method)
         || (['item/started', 'item/completed'].includes(method) && params.item?.type === 'fileChange')) {
       emit({ type: 'event', method, params: {...params, turnId: params.turnId ?? params.turn?.id} });
     }
   });
-  await rpc('initialize', {clientInfo:{name:'agent_nvim',title:'agent.nvim',version:'0.2.0'}});
+  await rpc('initialize', {clientInfo:{name:'agent_nvim',title:'agent.nvim',version:'0.3.0'}});
   ws.send(JSON.stringify({method:'initialized'}));
+  if (options.review?.git_fallback || options.review?.worktrees) {
+    gitReview=new GitReview(options.cwd,options.review,emit);
+    await gitReview.run(()=>options.review.git_fallback ? gitReview.snapshot() : gitReview.discover());
+  }
   emit({ type:'ready', endpoint, token });
 }
 let started = false;

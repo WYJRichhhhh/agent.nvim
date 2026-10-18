@@ -2,6 +2,9 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const exec=promisify(execFile);
 const arg=name=>process.argv[process.argv.indexOf(name)+1];
 const url=new URL(arg('--listen')), hash=arg('--ws-token-sha256');
 const sockets=new Set();let attempts=0,wrongAnswers=0;
@@ -15,9 +18,21 @@ function send(socket,value){
  socket.write(Buffer.concat([h,data]));
 }
 function broadcast(method,params){for(const s of sockets)send(s,{method,params});}
-const server=http.createServer((req,res)=>{
+const server=http.createServer(async (req,res)=>{
  if(!auth(req)){res.writeHead(401).end();return;}
  if(req.url==='/edit'){broadcast('thread/started',{thread});res.end('EDIT_STARTED');}
+ else if(req.url==='/script' || req.url==='/worktree-script') {
+  try {
+   if(req.url==='/script') fs.writeFileSync('doc.md','changed by script\n');
+   else {
+    await exec('git',['-c','core.hooksPath=/dev/null','worktree','add','--detach','.worktrees/docs','HEAD'],{cwd:process.cwd()});
+    fs.writeFileSync('.worktrees/docs/doc.md','worktree script update\n');
+   }
+   broadcast('item/completed',{threadId:thread.id,turnId:'turn1',item:{id:'script'+req.url,type:'commandExecution',status:'completed'}});
+   broadcast('turn/completed',{threadId:thread.id,turn:{id:'turn1',status:'completed'}});
+   res.end('SCRIPT_DONE');
+  }catch(error){res.writeHead(500).end(error.message);}
+ }
  else if(req.url==='/approve'){
   fs.writeFileSync('sample.txt','after\n');
   broadcast('serverRequest/resolved',{threadId:thread.id,requestId:900});

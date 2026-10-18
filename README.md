@@ -102,6 +102,7 @@ Add any of these mappings to the lazy.nvim `keys` table (Normal mode; inside the
 ```lua
 { "<leader>ar", "<cmd>Agent changes<cr>", desc = "Agent changed files" },
 { "<leader>ad", "<cmd>Agent diff<cr>", desc = "Agent turn diff" },
+{ "<leader>ag", "<cmd>Agent gitdiff<cr>", desc = "Review a Git worktree" },
 { "<leader>aD", "<cmd>Agent filediff<cr>", desc = "Agent selected file diff" },
 { "<leader>af", "<cmd>Agent follow<cr>", desc = "Toggle following Agent edits" },
 { "<leader>ae", "<cmd>Agent code<cr>", desc = "Focus changed source file" },
@@ -113,14 +114,24 @@ Add any of these mappings to the lazy.nvim `keys` table (Normal mode; inside the
 - On a successful file change, the original editor window opens/reloads the unmodified file, highlights additions with `DiffAdd`, and displays deleted text as `DiffDelete` virtual lines. The TUI keeps keyboard focus. A right split lets you see both; a float can cover the editor.
 - Entering a code window, typing or changing buffers **pauses following**. `:Agent follow` toggles it; `:Agent pause` explicitly pauses. Unsaved buffers are never replaced or reloaded. Save them and use `:Agent follow` to resume.
 - `:Agent changes` lists successful edits in the current/selected turn. Select a file to inspect it. `:Agent code` focuses the selected/latest source file; `:Agent next` / `prev` navigate its hunks.
-- `:Agent diff` opens the turn's aggregate unified diff; `:Agent filediff` shows the selected file's patch. Diff buffers are read-only, with red/green backgrounds. `q` returns to the previous buffer; `gf` opens the selected source file. Neither closes the CLI.
+- `:Agent diff` opens the turn's aggregate unified diff; `:Agent filediff` shows the selected file's patch. Diff buffers are read-only, with red/green backgrounds. `q` returns to the previous buffer; `gf` opens the source file under the diff cursor. Neither closes the CLI.
 - `:Agent turns` selects an earlier turn from this running plugin session (up to 20 by default). Historical/deleted entries open their patch, not old line highlights on today's source. This is **turn history**, not Git commit history or a persistent chat database.
 
 ### What gets tracked
 
-The plugin consumes official App Server `fileChange` items and `turn/diff/updated` notifications. Proposed/failed/rejected edits do not enter the successful-files list. The diff baseline comes from Codex's recorded edits for that turn, not Git HEAD, so pre-existing working-tree changes are not automatically included. Shell scripts, formatters and other writes that do not emit file-change events may be absent; this is not a replacement for `git diff` before committing. Very large patches above `review.max_diff_bytes` are skipped with a notice. Files outside the initial working directory (including symlink targets) are omitted by default.
+The plugin consumes official App Server `fileChange` items and `turn/diff/updated` notifications. Proposed/failed/rejected edits do not enter the successful-files list. The diff baseline comes from Codex's recorded edits for that turn, not Git HEAD, so pre-existing working-tree changes are not automatically included. In Git projects, `review.git_fallback = true` also compares local snapshots after tool completions and at turn end, catching shell/Ruby/Python/formatter writes without native file-change events. Entries reconstructed this way are marked `[Git]`. Snapshots use pre-turn working contents, so unrelated pre-existing changes are excluded; newly created worktrees use committed contents as their initial baseline. This cannot prove which process wrote a file: concurrent saved edits may also appear. Git-ignored, binary, oversized or snapshot-budget-excluded files are not covered; check `git diff` before committing. Very large patches above `review.max_diff_bytes` are skipped with a notice. Files outside the initial directory are omitted unless they belong to registered worktrees of the same Git project (`review.worktrees = true`). Arbitrary external/symlink targets remain excluded.
 
 Protocol references: [Codex App Server](https://learn.chatgpt.com/docs/app-server) and [CLI commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
+
+### tmux zoom, scrolling and inspecting an existing worktree
+
+Floating windows and right/bottom splits adapt to terminal/tmux zoom changes after layout settles. Fractional sizes follow the new editor dimensions; fixed cell sizes stay fixed where space allows. The existing PTY is resized without restarting the CLI, moving focus or clearing unfinished input.
+
+By default `terminal.capture_mouse = true` temporarily enables Neovim mouse capture **only while the Agent buffer is focused**, so tmux forwards the wheel instead of entering copy-mode. Leaving/hiding/stopping restores the previous `mouse` value; explicit user changes are preserved. Set it to `false` to opt out. If tmux is already in copy-mode, leave that mode first. Native TUI scrolling remains owned by the CLI. For Neovim's retained terminal output, use **Ctrl-\, Ctrl-n**, then **Ctrl-b / Ctrl-f**; `i` returns to CLI input.
+
+Use `:Agent gitdiff` to choose a registered worktree and inspect its current tracked-file diff against HEAD, including modifications made before this plugin session. This explicitly includes pre-existing/staged changes and omits untracked files; it is workspace review, not attribution to this Agent. It can inspect already completed tasks. `gf` opens the file under the diff cursor. Unlike `changes`, it does not require a captured file-change event.
+
+Git fallback snapshots are bounded by `review.max_snapshot_bytes` (32 MiB total) and `review.max_diff_bytes` (2 MiB per text file/patch). Snapshots are local; patch generation uses private temporary files that are removed after diffing. Scans are serialized and coalesced rather than run on every keystroke. Turn-local automatic review starts with future tasks; it does not reconstruct an unknown pre-turn baseline for old tasks. Disable `review.git_fallback` or `review.worktrees` independently if desired.
 
 ### Ownership and lifecycle
 
@@ -196,9 +207,11 @@ require("agent").setup({
         start_insert = true,
         hide_key = false, -- no buffer-local toggle key by default
         show_hint = true,
+        capture_mouse = true,
     },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
-    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true },
+    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true,
+        git_fallback = true, worktrees = true, max_snapshot_bytes = 32 * 1024 * 1024 },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = {
@@ -226,7 +239,7 @@ require("agent").register_backend("local_agent", {
 
 Then run `:Agent start local_agent`. Commands and resume commands must be nonempty argv lists. A backend may be another interactive executable; its TUI compatibility should be checked in your environment.
 
-Lua API: `setup`, `register_backend`, `open`, `hide`, `toggle`, `focus`, `start`, `resume`, `stop`, `select`, `status`, `help`, `changes`, `diff`, `filediff`, `follow`, `pause`, `code`, `turns`, `next`, `prev`.
+Lua API: `setup`, `register_backend`, `open`, `hide`, `toggle`, `focus`, `start`, `resume`, `stop`, `select`, `status`, `help`, `changes`, `diff`, `filediff`, `follow`, `pause`, `code`, `turns`, `next`, `prev`, `gitdiff`.
 
 User events: `AgentStart` and `AgentExit`, with backend, directory, buffer and exit-code information in event data. Editor lifecycle is managed independently of the CLI's conversation history.
 
@@ -248,7 +261,10 @@ From the repository root, run:
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/review.lua
 nvim --headless -u NONE -l tests/bridge.lua
-node --test tests/websocket.mjs
+nvim --headless -u NONE -l tests/git-bridge.lua
+nvim --headless -u NONE -l tests/mouse.lua
+node --test tests/websocket.mjs tests/git-review.mjs
+python3 tests/ui_resize.py # development-only Python msgpack dependency
 ```
 
 Tests use a real PTY and a local Python fixture. They do not call a model or read authentication files. Bridge/transport tests open only temporary loopback listeners. They exercise singleton reuse, hidden interaction, unfinished input, directories, environment overrides, exits, explicit resume, window layouts and asynchronous selection. They also check that an invalid shell setting does not prevent direct executable launch and that window colors refresh without changing the process.

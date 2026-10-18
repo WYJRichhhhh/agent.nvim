@@ -72,14 +72,19 @@ capability-token 的 Codex。已验证 macOS + Codex 0.163.0。Claude 不使用�
     :Agent turns            选择当前插件会话内的历史轮次
     :Agent next / prev      在对应源文件中跳到下一处/上一处修改
 
-差异 buffer：q 返回原 buffer；gf 打开最近选择文件。不会停止 CLI。
+差异 buffer：q 返回原 buffer；gf 打开光标所在文件。不会停止 CLI。
 历史轮次/删除文件显示补丁，不把旧差异标到当前源文件上。
 这些命令需从 Neovim 普通模式执行：CLI 输入状态先按 Ctrl-\、Ctrl-n。
-README 提供 <leader>ar/ad/aD/af/ae/ah/an/ap 映射示例；插件不创建全局按键。
+README 提供 <leader>ar/ad/ag/aD/af/ae/ah/an/ap 映射示例；插件不创建全局按键。
 
 数据来自 fileChange 与 turn/diff/updated，仅记录实际收到的成功修改。
-不等于 Git HEAD 差异或完整工作区修改；shell/格式化器写入可能没有事件。
-提交前仍应检查 git diff。大补丁跳过并提示，默认限制在启动目录内。
+Git 项目默认以任务前本地快照补充 shell/脚本写入，条目标记 [Git]。
+无法准确归因并发写入；忽略/二进制/超大文件与快照预算之外的内容可能缺失。
+不等于 Git HEAD 差异或完整工作区修改。
+提交前仍应检查 git diff。大补丁跳过并提示，允许同项目已注册 worktree。
+:Agent gitdiff 可选择 worktree 查看相对 HEAD 的已跟踪文件差异，包含已有
+修改与暂存修改，不包含未跟踪文件；可以用于检查旧版未捕获的已完成任务。
+自动差异仅从新任务开始采集，无法重建未知的旧任务前基线。
 
 隐藏保持服务和会话。停止/切换/删除终端/退出 TUI 或 Neovim 时清理服务。
 CLI 自然退出后已收到的差异保留到显式停止/重启。连接错误会报告并停止，
@@ -94,7 +99,11 @@ waiting 表示尚未落盘，首次任务开始后会继续订阅。
     review.follow           true，初始自动跟随状态
     review.history_limit    20，保留轮数（本次插件会话内）
     review.max_diff_bytes   2097152，单个补丁的大小上限
-    review.restrict_to_cwd  true，检查文件及符号链接目标位于启动目录内
+    review.restrict_to_cwd  true，限制为启动目录及允许的 worktree
+    review.worktrees        true，发现同一 Git 项目的已注册 worktree
+    review.git_fallback     true，任务前快照与工具完成后检测脚本写入
+    review.max_snapshot_bytes 33554432，快照总预算（32 MiB）
+    terminal.capture_mouse  true，Agent 聚焦时临时启用鼠标，离开恢复
 
 关闭 codex.enabled 即使用原来的直接终端。启用时 command[1] 必须能执行
 app-server 子命令；shell argv 包装方式只适用于直接终端模式。
@@ -118,6 +127,14 @@ app-server 子命令；shell argv 包装方式只适用于直接终端模式。
 <
 默认只有终端普通模式下的 q 和 ? 局部映射，不占用 CLI 输入中的 q 或 ?。
 关闭首次提示可设置 terminal.show_hint = false；仍可随时 :Agent help。
+
+缩放与滚动                                             *agent.nvim-scrolling*
+
+终端 / tmux zoom 改变尺寸后自动调整浮窗、分屏和 PTY，保留原进程和输入。
+Agent 聚焦时临时启用 mouse，滚轮交给内层应用；回代码区恢复原设置。
+如果 tmux 已进入 copy-mode，请先退出。设置 terminal.capture_mouse=false
+可以关闭鼠标接管。查看 Neovim 保留输出：Ctrl-\、Ctrl-n 后 Ctrl-b / Ctrl-f；
+i 返回输入。原生 CLI 的历史仍由其自身滚动功能管理。
 
 生命周期                                               *agent.nvim-session*
     隐藏和重新显示复用同一个进程与终端 buffer。

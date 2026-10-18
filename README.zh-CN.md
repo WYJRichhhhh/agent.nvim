@@ -64,6 +64,7 @@ opts = {
 | --- | --- | --- |
 | `<leader>ar` | `:Agent changes` | 修改文件列表，选择后打开文件 |
 | `<leader>ad` | `:Agent diff` | 整轮红绿差异，只读 |
+| `<leader>ag` | `:Agent gitdiff` | 选择 worktree 查看当前 Git 差异（含已有修改） |
 | `<leader>aD` | `:Agent filediff` | 最近选择文件的差异 |
 | `<leader>af` | `:Agent follow` | 开启/暂停自动跟随 |
 | `<leader>ae` | `:Agent code` | 聚焦最近选择/修改的源文件 |
@@ -74,15 +75,25 @@ opts = {
 
 进入代码窗口、切换文件或开始编辑时会**自动暂停跟随**，避免抢走你的操作。`:Agent follow` 切换跟随状态；`:Agent pause` 明确暂停。任何未保存的 buffer 都不会被自动替换或重新加载；保存后再恢复跟随。未修改的已打开文件可以自动重新加载，保留原有 `autoread` 配置。
 
-差异窗口是只读 unified diff，按 `q` 返回原 buffer，按 `gf` 打开最近选择的源文件；不会停止 CLI。历史轮次和已删除文件优先显示补丁，避免把旧行号标到当前版本上。历史默认保留最近 20 轮，范围是本次插件会话；**不等于 Git 提交历史，也不是跨进程的聊天记录库**。
+差异窗口是只读 unified diff，按 `q` 返回原 buffer，按 `gf` 打开 diff 光标所在的源文件；不会停止 CLI。历史轮次和已删除文件优先显示补丁，避免把旧行号标到当前版本上。历史默认保留最近 20 轮，范围是本次插件会话；**不等于 Git 提交历史，也不是跨进程的聊天记录库**。
 
 ### 数据来源与范围
 
 直接消费官方 App Server 的 `fileChange` 和 `turn/diff/updated` 事件，不解析 TUI 文本。列表只记录成功的文件修改，尚未批准、失败和被拒绝的修改不会混入。对比基准由 Codex 该轮记录的修改决定，不直接对比 Git HEAD，因此不会自动把开始任务前已有的全部改动算进去。
 
-通过 shell、格式化器或其他工具写入、但未产生文件修改事件的内容可能不在列表中；提交前仍应检查 `git diff`。超过 `review.max_diff_bytes` 的大补丁会跳过并提示。默认不打开启动目录之外的文件，符号链接的实际目标也会检查。
+Git 项目默认启用 `review.git_fallback`：在任务开始时记录本地工作内容，在工具完成和整轮结束后检查差异，补上 Ruby/Python/shell/格式化器等未产生原生事件的写入，列表标记 `[Git]`。对比任务开始前的实际内容，避免直接混入已有修改；任务中新建 worktree 则以其提交内容建立初始基线。它无法证明具体是谁写入文件：并发保存的其他编辑也可能被收集。忽略文件、二进制文件、超大文件和超出快照预算的文件不在兜底范围；提交前仍应检查 `git diff`。超过 `review.max_diff_bytes` 的大补丁会跳过并提示。默认只打开启动目录及同一 Git 项目已注册的 worktree 中的文件；`review.worktrees = false` 可关闭跨 worktree 支持，任意外部路径和符号链接目标仍会检查。
 
 协议参考：[Codex App Server](https://learn.chatgpt.com/docs/app-server)、[CLI 命令](https://learn.chatgpt.com/docs/developer-commands?surface=cli)。
+
+### tmux zoom、滚轮与已有 worktree
+
+终端/tmux zoom 改变尺寸后，浮窗和右侧/底部分屏会在 Neovim 布局稳定后重算尺寸，并同步 PTY。比例配置跟随新尺寸，固定行列配置在可用空间内保持固定；不重启进程、不抢焦点、不清空未提交输入。
+
+默认 `terminal.capture_mouse = true`：**仅在 Agent buffer 获得焦点时**临时启用 Neovim 鼠标，让 tmux 把滚轮转发给内层应用，而非进入自己的 copy-mode。离开、隐藏或停止时恢复原 `mouse` 设置，也保留你期间的显式修改。可设为 `false` 关闭。若 tmux 已处于 copy-mode，请先退出该模式。原生 TUI 历史由 CLI 滚动；查看 Neovim 保留的终端输出可先按 **Ctrl-\、Ctrl-n**，再 **Ctrl-b / Ctrl-f** 翻页，`i` 返回输入。
+
+`:Agent gitdiff` 可以选择当前项目的 worktree，查看其相对 HEAD 的已跟踪文件差异。它**包含任务开始前已有的修改和暂存修改，不包含未跟踪文件**，用于检查当前工作区，不宣称都是 Agent 所改。刚才已经完成、未被旧版捕获的任务也能这样查看。diff 中 `gf` 打开光标所在文件。
+
+自动兜底的快照总预算为 `review.max_snapshot_bytes`（默认 32 MiB），单文件/补丁上限 `review.max_diff_bytes`（2 MiB）。快照仅在本机使用，生成补丁用的私有临时文件会在对比后删除。检测串行合并执行，不逐按键扫描。自动会话差异从后续任务开始采集，不能凭空重建旧任务开始前的基线；旧任务可用 `gitdiff` 检查当前工作区。`git_fallback` 和 `worktrees` 可以分别关闭。
 
 ### 进程、登录与清理
 
@@ -169,9 +180,11 @@ require("agent").setup({
         start_insert = true,
         hide_key = false,
         show_hint = true,
+        capture_mouse = true,
     },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
-    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true },
+    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true,
+        git_fallback = true, worktrees = true, max_snapshot_bytes = 32 * 1024 * 1024 },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
@@ -203,7 +216,7 @@ require("agent").register_backend("local_agent", {
 
 注册后可以执行 `:Agent start local_agent`。自动发现只检查 `command[1]` 是否为可执行文件，不启动进程或探测账号状态。
 
-Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focus`、`start`、`resume`、`stop`、`select`、`status`、`help`、`changes`、`diff`、`filediff`、`follow`、`pause`、`code`、`turns`、`next` 和 `prev`。`toggle()` 是按可见性切换；`focus()` 在其他代码窗口中优先聚焦 Agent，已经聚焦时才隐藏。
+Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focus`、`start`、`resume`、`stop`、`select`、`status`、`help`、`changes`、`diff`、`filediff`、`follow`、`pause`、`code`、`turns`、`next`、`prev` 和 `gitdiff`。`toggle()` 是按可见性切换；`focus()` 在其他代码窗口中优先聚焦 Agent，已经聚焦时才隐藏。
 
 ## 验证
 
@@ -213,7 +226,10 @@ Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focu
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/review.lua
 nvim --headless -u NONE -l tests/bridge.lua
-node --test tests/websocket.mjs
+nvim --headless -u NONE -l tests/git-bridge.lua
+nvim --headless -u NONE -l tests/mouse.lua
+node --test tests/websocket.mjs tests/git-review.mjs
+python3 tests/ui_resize.py # 仅开发测试需要 Python msgpack 包
 ```
 
 测试使用真实 PTY，但不调用模型或读取认证文件。bridge/传输测试仅启动临时 loopback 服务；还覆盖订阅重试、标题线程过滤、审批不被观察连接代答、未保存内容保护、历史/重命名/删除、红绿渲染和服务清理。覆盖单进程复用、隐藏时交互、未提交输入、工作目录、环境变量、退出处理、分屏、窗口手动关闭和异步后端选择。

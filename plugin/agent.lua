@@ -19,6 +19,7 @@ local actions = {
     "code",
     "diff",
     "filediff",
+    "gitdiff",
     "follow",
     "pause",
     "turns",
@@ -33,7 +34,7 @@ vim.api.nvim_create_user_command("Agent", function(args)
         or (backend and action ~= "start" and action ~= "open" and action ~= "resume")
     then
         vim.notify(
-            "用法：:Agent [open|hide|toggle|focus|start|resume|stop|select|status|health|help|changes|code|diff|filediff|follow|pause|turns|next|prev] [backend]",
+            "用法：:Agent [open|hide|toggle|focus|start|resume|stop|select|status|health|help|changes|code|diff|filediff|gitdiff|follow|pause|turns|next|prev] [backend]",
             vim.log.levels.WARN
         )
         return

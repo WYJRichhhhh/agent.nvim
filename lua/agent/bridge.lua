@@ -32,6 +32,8 @@ function M.start(session, env, ready, failure)
         elseif value.type == "thread" then
             bridge.thread_id = value.threadId
             bridge.state = value.state
+        elseif value.type == "roots" then
+            require("agent.review").set_roots(value.roots)
         elseif value.type == "event" then
             require("agent.review").event(value.method, value.params)
         elseif value.type == "warning" then
@@ -77,6 +79,7 @@ function M.start(session, env, ready, failure)
         executable = session.command[1],
         cwd = session.cwd,
         timeout = options.startup_timeout,
+        review = require("agent.config").options.review,
     }) .. "\n")
 end
 

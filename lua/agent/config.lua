@@ -13,9 +13,17 @@ M.defaults = {
         border = "rounded",
         winhighlight = "Normal:AgentNormal,NormalNC:AgentNormal,NormalFloat:AgentNormal,FloatBorder:AgentBorder,FloatTitle:AgentTitle",
     },
-    terminal = { start_insert = true, hide_key = false, show_hint = true },
+    terminal = { start_insert = true, hide_key = false, show_hint = true, capture_mouse = true },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
-    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true },
+    review = {
+        follow = true,
+        history_limit = 20,
+        max_diff_bytes = 2 * 1024 * 1024,
+        restrict_to_cwd = true,
+        git_fallback = true,
+        worktrees = true,
+        max_snapshot_bytes = 32 * 1024 * 1024,
+    },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
@@ -68,6 +76,7 @@ function M.resolve(opts)
     assert(type(result.window.winhighlight) == "string", "winhighlight 必须是字符串")
     assert(type(result.terminal.start_insert) == "boolean", "start_insert 必须是布尔值")
     assert(type(result.terminal.show_hint) == "boolean", "show_hint 必须是布尔值")
+    assert(type(result.terminal.capture_mouse) == "boolean", "capture_mouse 必须是布尔值")
     local hide_key = result.terminal.hide_key
     assert(hide_key == false or type(hide_key) == "string", "hide_key 必须是字符串或 false")
     assert(type(result.codex.enabled) == "boolean", "codex.enabled 必须是布尔值")
@@ -76,10 +85,10 @@ function M.resolve(opts)
         type(result.codex.startup_timeout) == "number" and result.codex.startup_timeout >= 1000,
         "startup_timeout 至少为 1000ms"
     )
-    for _, key in ipairs({ "follow", "restrict_to_cwd" }) do
+    for _, key in ipairs({ "follow", "restrict_to_cwd", "git_fallback", "worktrees" }) do
         assert(type(result.review[key]) == "boolean", "review." .. key .. " 必须是布尔值")
     end
-    for _, key in ipairs({ "history_limit", "max_diff_bytes" }) do
+    for _, key in ipairs({ "history_limit", "max_diff_bytes", "max_snapshot_bytes" }) do
         assert(
             type(result.review[key]) == "number" and result.review[key] >= 1 and result.review[key] % 1 == 0,
             "review." .. key .. " 必须是正整数"

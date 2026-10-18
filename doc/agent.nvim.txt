@@ -48,6 +48,58 @@ Alt-a 只负责显示/隐藏，不会重新弹出后端菜单。
     :Agent status           查看后端、目录、job 和显示状态
     :Agent health           检查版本与后端可执行文件
 
+Codex 修改跟踪                                         *agent.nvim-review*
+
+可选开启，需要 Node.js 22+、macOS/Linux，以及支持 --remote / App Server /
+capability-token 的 Codex。已验证 macOS + Codex 0.163.0。Claude 不使用此功能。
+>
+    require('agent').setup({
+        codex = { enabled = true },
+        window = { layout = 'right', width = 0.42 },
+        review = { follow = true },
+    })
+<
+原生 TUI 负责输入与审批；观察连接只接收结构化修改事件。
+成功修改后，原编辑窗口打开真实文件，新增标绿、删除显示红色虚拟行，
+焦点保留在 TUI。进入代码窗口或编辑会自动暂停，不覆盖任何未保存内容。
+
+    :Agent changes          当前/选定轮次的修改文件清单
+    :Agent diff             整轮 unified diff，只读红绿对比
+    :Agent filediff         最近选择文件的补丁
+    :Agent follow           切换自动跟随，恢复时回到最近修改
+    :Agent pause            暂停自动跟随
+    :Agent code             聚焦最近选择/修改的源文件
+    :Agent turns            选择当前插件会话内的历史轮次
+    :Agent next / prev      在对应源文件中跳到下一处/上一处修改
+
+差异 buffer：q 返回原 buffer；gf 打开最近选择文件。不会停止 CLI。
+历史轮次/删除文件显示补丁，不把旧差异标到当前源文件上。
+这些命令需从 Neovim 普通模式执行：CLI 输入状态先按 Ctrl-\、Ctrl-n。
+README 提供 <leader>ar/ad/aD/af/ae/ah/an/ap 映射示例；插件不创建全局按键。
+
+数据来自 fileChange 与 turn/diff/updated，仅记录实际收到的成功修改。
+不等于 Git HEAD 差异或完整工作区修改；shell/格式化器写入可能没有事件。
+提交前仍应检查 git diff。大补丁跳过并提示，默认限制在启动目录内。
+
+隐藏保持服务和会话。停止/切换/删除终端/退出 TUI 或 Neovim 时清理服务。
+CLI 自然退出后已收到的差异保留到显式停止/重启。连接错误会报告并停止，
+不会偷偷退回另开一个 CLI。空会话落盘前会等待订阅，不要求用户重新启动。
+依赖不足时 :Agent health；:Agent status 查看连接状态。终端停在初始输入框时
+waiting 表示尚未落盘，首次任务开始后会继续订阅。
+
+高级选项（均为默认值）：
+    codex.enabled           false，是否启用 Codex bridge
+    codex.node              'node'，Node 可执行文件路径
+    codex.startup_timeout   15000，服务启动超时（毫秒）
+    review.follow           true，初始自动跟随状态
+    review.history_limit    20，保留轮数（本次插件会话内）
+    review.max_diff_bytes   2097152，单个补丁的大小上限
+    review.restrict_to_cwd  true，检查文件及符号链接目标位于启动目录内
+
+关闭 codex.enabled 即使用原来的直接终端。启用时 command[1] 必须能执行
+app-server 子命令；shell argv 包装方式只适用于直接终端模式。
+更详细的依赖、进程所有权、登录继承和范围说明见中英文 README。
+
 配置                                                   *agent.nvim-setup*
 >
     require('agent').setup({

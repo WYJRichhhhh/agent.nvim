@@ -14,6 +14,8 @@ M.defaults = {
         winhighlight = "Normal:AgentNormal,NormalNC:AgentNormal,NormalFloat:AgentNormal,FloatBorder:AgentBorder,FloatTitle:AgentTitle",
     },
     terminal = { start_insert = true, hide_key = false, show_hint = true },
+    codex = { enabled = false, node = "node", startup_timeout = 15000 },
+    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
@@ -68,6 +70,21 @@ function M.resolve(opts)
     assert(type(result.terminal.show_hint) == "boolean", "show_hint 必须是布尔值")
     local hide_key = result.terminal.hide_key
     assert(hide_key == false or type(hide_key) == "string", "hide_key 必须是字符串或 false")
+    assert(type(result.codex.enabled) == "boolean", "codex.enabled 必须是布尔值")
+    assert(type(result.codex.node) == "string" and result.codex.node ~= "", "codex.node 必须是命令路径")
+    assert(
+        type(result.codex.startup_timeout) == "number" and result.codex.startup_timeout >= 1000,
+        "startup_timeout 至少为 1000ms"
+    )
+    for _, key in ipairs({ "follow", "restrict_to_cwd" }) do
+        assert(type(result.review[key]) == "boolean", "review." .. key .. " 必须是布尔值")
+    end
+    for _, key in ipairs({ "history_limit", "max_diff_bytes" }) do
+        assert(
+            type(result.review[key]) == "number" and result.review[key] >= 1 and result.review[key] % 1 == 0,
+            "review." .. key .. " 必须是正整数"
+        )
+    end
     for name, backend in pairs(result.backends) do
         M.validate_backend(name, backend)
     end

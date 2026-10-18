@@ -4,7 +4,7 @@ A persistent, single-session terminal for **Claude Code, Codex and other interac
 
 [中文说明](README.zh-CN.md) · [Report an issue](https://github.com/WYJRichhhhh/agent.nvim/issues)
 
-**Experimental first release.** This plugin was extracted from a personal Neovim configuration. It is independent of that configuration, tmux, Ghostty, zsh and any theme plugin. The actual AI features remain in your chosen CLI.
+**Experimental.** This plugin was extracted from a personal Neovim configuration. It is independent of that configuration, tmux, Ghostty, zsh and any theme plugin. The actual AI features remain in your chosen CLI.
 
 ## What problem does it solve?
 
@@ -24,7 +24,7 @@ Run `:Agent help` (or `:help agent.nvim`) for the operation guide. While typing 
 - Users of bash, fish, zsh or other shells: **the default launcher does not invoke a shell**.
 - Users of other Neovim configurations and plugin managers. There are no mandatory plugin dependencies.
 
-Requirements: **Neovim 0.11+**, and at least one CLI executable visible in **Neovim's PATH**. Runtime code is pure Lua. Python 3 is needed only to run the development tests.
+Requirements: **Neovim 0.11+**, and at least one CLI executable visible in **Neovim's PATH**. The terminal host is Lua; optional Codex review adds a Node.js 22+ helper. Python 3 is needed only for development tests.
 
 Locally tested on macOS with Neovim 0.12. Linux, Windows, different terminal emulators and CLI versions have not all been validated end to end; executable discovery and TUI rendering may differ. Please report problems rather than assuming identical terminal behavior everywhere.
 
@@ -84,6 +84,62 @@ Auto discovery checks only whether each backend's `command[1]` is executable. If
 
 Inside the terminal, CLI keys such as Esc and Ctrl-C keep their native meanings. Enter terminal-normal mode with **Ctrl-\ then Ctrl-n**, then `q` hides the Agent or `i` returns to input. Alt/Meta mappings depend on your terminal forwarding those keys; `:Agent` remains available if they are intercepted.
 
+## Codex live changes (opt in)
+
+Keep Codex's native TUI while viewing its edits in Neovim. Requires **Node.js 22+**, macOS/Linux, and a Codex CLI with `--remote`, App Server and capability-token support; validated with **Codex 0.163.0 on macOS**. Windows can use terminal-only mode. No npm packages, SDK, API keys or extra login are required. Claude/custom backends stay terminal-only.
+
+```lua
+opts = {
+    codex = { enabled = true },
+    window = { layout = "right", width = 0.42 },
+    review = { follow = true },
+    terminal = { hide_key = "<M-a>" },
+}
+```
+
+Add any of these mappings to the lazy.nvim `keys` table (Normal mode; inside the TUI press **Ctrl-\, Ctrl-n** first):
+
+```lua
+{ "<leader>ar", "<cmd>Agent changes<cr>", desc = "Agent changed files" },
+{ "<leader>ad", "<cmd>Agent diff<cr>", desc = "Agent turn diff" },
+{ "<leader>aD", "<cmd>Agent filediff<cr>", desc = "Agent selected file diff" },
+{ "<leader>af", "<cmd>Agent follow<cr>", desc = "Toggle following Agent edits" },
+{ "<leader>ae", "<cmd>Agent code<cr>", desc = "Focus changed source file" },
+{ "<leader>ah", "<cmd>Agent turns<cr>", desc = "Agent turn history" },
+{ "<leader>an", "<cmd>Agent next<cr>", desc = "Next changed hunk" },
+{ "<leader>ap", "<cmd>Agent prev<cr>", desc = "Previous changed hunk" },
+```
+
+- On a successful file change, the original editor window opens/reloads the unmodified file, highlights additions with `DiffAdd`, and displays deleted text as `DiffDelete` virtual lines. The TUI keeps keyboard focus. A right split lets you see both; a float can cover the editor.
+- Entering a code window, typing or changing buffers **pauses following**. `:Agent follow` toggles it; `:Agent pause` explicitly pauses. Unsaved buffers are never replaced or reloaded. Save them and use `:Agent follow` to resume.
+- `:Agent changes` lists successful edits in the current/selected turn. Select a file to inspect it. `:Agent code` focuses the selected/latest source file; `:Agent next` / `prev` navigate its hunks.
+- `:Agent diff` opens the turn's aggregate unified diff; `:Agent filediff` shows the selected file's patch. Diff buffers are read-only, with red/green backgrounds. `q` returns to the previous buffer; `gf` opens the selected source file. Neither closes the CLI.
+- `:Agent turns` selects an earlier turn from this running plugin session (up to 20 by default). Historical/deleted entries open their patch, not old line highlights on today's source. This is **turn history**, not Git commit history or a persistent chat database.
+
+### What gets tracked
+
+The plugin consumes official App Server `fileChange` items and `turn/diff/updated` notifications. Proposed/failed/rejected edits do not enter the successful-files list. The diff baseline comes from Codex's recorded edits for that turn, not Git HEAD, so pre-existing working-tree changes are not automatically included. Shell scripts, formatters and other writes that do not emit file-change events may be absent; this is not a replacement for `git diff` before committing. Very large patches above `review.max_diff_bytes` are skipped with a notice. Files outside the initial working directory (including symlink targets) are omitted by default.
+
+Protocol references: [Codex App Server](https://learn.chatgpt.com/docs/app-server) and [CLI commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
+
+### Ownership and lifecycle
+
+```text
+agent.nvim → Node helper → private, token-protected local Codex App Server
+                │                         ├── native TUI (input + approvals)
+                └── observer connection ───┘
+                          ↓
+                changed files / source highlights / diff
+```
+
+The helper uses built-in Node modules only. Each session gets a dedicated loopback endpoint and random capability token; the token travels over private process pipes/environment and is not written into config/history by the plugin. This token is local transport authentication, not an OpenAI API key. App Server uses your normal Codex environment, settings and login. The observer never starts turns or answers approvals. It ignores title-generation and child-agent threads, and retries subscription while a new TUI thread has not yet been persisted. Latest-turn file items are fetched after subscribing to recover edits missed during startup; older servers without pagination still provide live events.
+
+Hide/show retains the TUI, helper and server. Stop, backend replacement, terminal-buffer deletion, native TUI exit or Neovim exit shuts down the owned helper/server. A bridge failure stops that CLI session and reports the error instead of silently launching a second CLI. Existing review data stays inspectable after native CLI exit until the session is discarded. Restore with the normal CLI resume flow; old-turn history is not reconstructed in full.
+
+Keep `backends.codex.command[1]` as a Codex executable (or a wrapper that forwards `app-server` arguments). The server is launched as `{ executable, "app-server", ... }`; extra TUI command arguments are not copied into the server invocation. Put shared configuration in normal Codex configuration/environment. Shell argv wrappers such as `{ "zsh", "-ic", "codex" }` are for terminal-only mode. Update/restart explicitly to change settings; no task is restarted for colors or review toggles.
+
+Set `codex.enabled = false` to return to the original direct terminal mode. `:Agent health` checks Node/CLI availability; `:Agent status` includes bridge connection and review/follow state. This integration is experimental; Linux is intended but not yet validated with a real CLI, and CLI protocol changes may need adapter updates.
+
 ## Session and directory lifecycle
 
 There is **one session per Neovim process**, not one global session per computer.
@@ -139,7 +195,10 @@ require("agent").setup({
     terminal = {
         start_insert = true,
         hide_key = false, -- no buffer-local toggle key by default
+        show_hint = true,
     },
+    codex = { enabled = false, node = "node", startup_timeout = 15000 },
+    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = {
@@ -167,7 +226,7 @@ require("agent").register_backend("local_agent", {
 
 Then run `:Agent start local_agent`. Commands and resume commands must be nonempty argv lists. A backend may be another interactive executable; its TUI compatibility should be checked in your environment.
 
-Lua API: `setup`, `register_backend`, `open`, `hide`, `toggle`, `focus`, `start`, `resume`, `stop`, `select`, `status`.
+Lua API: `setup`, `register_backend`, `open`, `hide`, `toggle`, `focus`, `start`, `resume`, `stop`, `select`, `status`, `help`, `changes`, `diff`, `filediff`, `follow`, `pause`, `code`, `turns`, `next`, `prev`.
 
 User events: `AgentStart` and `AgentExit`, with backend, directory, buffer and exit-code information in event data. Editor lifecycle is managed independently of the CLI's conversation history.
 
@@ -187,9 +246,12 @@ From the repository root, run:
 
 ```sh
 nvim --headless -u NONE -l tests/run.lua
+nvim --headless -u NONE -l tests/review.lua
+nvim --headless -u NONE -l tests/bridge.lua
+node --test tests/websocket.mjs
 ```
 
-Tests use a real PTY and a local Python fixture. They do not call a model, use the network or read authentication files. They exercise singleton reuse, hidden interaction, unfinished input, directories, environment overrides, exits, explicit resume, window layouts and asynchronous selection. They also check that an invalid shell setting does not prevent direct executable launch and that window colors refresh without changing the process.
+Tests use a real PTY and a local Python fixture. They do not call a model or read authentication files. Bridge/transport tests open only temporary loopback listeners. They exercise singleton reuse, hidden interaction, unfinished input, directories, environment overrides, exits, explicit resume, window layouts and asynchronous selection. They also check that an invalid shell setting does not prevent direct executable launch and that window colors refresh without changing the process.
 
 This release is intentionally small. Please report your OS, Neovim/CLI versions, layout, relevant health output and reproduction steps. Do not upload credentials or unrelated private configuration.
 

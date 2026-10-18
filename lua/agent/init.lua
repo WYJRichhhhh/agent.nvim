@@ -2,6 +2,8 @@ local M = {}
 local config = require("agent.config")
 local registry = require("agent.registry")
 local window = require("agent.window")
+local bridge = require("agent.bridge")
+local review = require("agent.review")
 local session, selected, selecting
 local generation = 0
 local installed = false
@@ -12,8 +14,11 @@ local function warn(message)
 end
 
 local function alive()
-    if not session or session.state ~= "running" then
+    if not session or (session.state ~= "running" and session.state ~= "starting") then
         return false
+    end
+    if session.state == "starting" then
+        return true
     end
     -- 退出回调可能尚未被事件循环处理，查询真实 job 状态避免错误复用。
     return session.job_id and vim.fn.jobwait({ session.job_id }, 0)[1] == -1
@@ -33,6 +38,8 @@ local function discard()
     end
     local old = session
     session = nil
+    bridge.stop(old)
+    review.close()
     window.hide(old)
     if vim.api.nvim_buf_is_valid(old.bufnr) then
         vim.api.nvim_buf_delete(old.bufnr, { force = true })
@@ -57,6 +64,7 @@ local function launch(name, cwd, command_override)
         backend = name,
         cwd = cwd,
         state = "starting",
+        command = vim.deepcopy(command),
         bufnr = vim.api.nvim_create_buf(false, true),
     }
     session = current
@@ -67,61 +75,91 @@ local function launch(name, cwd, command_override)
     -- 终端先取得实际窗口尺寸，再启动 CLI，避免首次绘制只有默认的 80 列。
     window.show(current)
     local env = vim.tbl_extend("force", {}, config.options.env, backend.env or {})
-    local ok, job = pcall(vim.api.nvim_buf_call, current.bufnr, function()
-        return vim.fn.jobstart(vim.deepcopy(command), {
-            term = true,
-            cwd = cwd,
-            env = next(env) and env or vim.empty_dict(),
-            on_exit = function(_, code)
-                vim.schedule(function()
-                    if session ~= current then
-                        return
-                    end
-                    current.state, current.exit_code = "exited", code
-                    emit("AgentExit", current)
-                    if not current.stopping then
-                        vim.notify(
-                            ("%s 已退出（%d）。:Agent open 可查看输出，:Agent start 可重新启动。"):format(
-                                name,
-                                code
-                            ),
-                            code == 0 and vim.log.levels.INFO or vim.log.levels.WARN,
-                            { title = "Agent" }
-                        )
-                    end
-                end)
-            end,
-        })
-    end)
-    if not ok or job <= 0 then
-        discard()
-        warn("启动失败：" .. (ok and tostring(job) or tostring(job)))
-        return
+    local function spawn_terminal(argv, terminal_env)
+        if session ~= current then
+            return
+        end
+        local ok, job = pcall(vim.api.nvim_buf_call, current.bufnr, function()
+            return vim.fn.jobstart(vim.deepcopy(argv), {
+                term = true,
+                cwd = cwd,
+                env = next(terminal_env) and terminal_env or vim.empty_dict(),
+                on_exit = function(_, code)
+                    vim.schedule(function()
+                        if session ~= current then
+                            return
+                        end
+                        bridge.stop(current)
+                        current.state, current.exit_code = "exited", code
+                        emit("AgentExit", current)
+                        if not current.stopping then
+                            vim.notify(
+                                ("%s 已退出（%d）。:Agent open 可查看输出，:Agent start 可重新启动。"):format(
+                                    name,
+                                    code
+                                ),
+                                code == 0 and vim.log.levels.INFO or vim.log.levels.WARN,
+                                { title = "Agent" }
+                            )
+                        end
+                    end)
+                end,
+            })
+        end)
+        if not ok or job <= 0 then
+            discard()
+            warn("启动失败：" .. (ok and tostring(job) or tostring(job)))
+            return
+        end
+        current.job_id, current.state = job, "running"
+        vim.bo[current.bufnr].filetype = "agent_terminal"
+        vim.keymap.set("n", "q", M.hide, { buffer = current.bufnr, desc = "隐藏 Agent，会话继续运行" })
+        vim.keymap.set("n", "?", M.help, { buffer = current.bufnr, desc = "Agent 操作帮助" })
+        if config.options.terminal.hide_key and config.options.terminal.hide_key ~= "" then
+            vim.keymap.set(
+                { "n", "t" },
+                config.options.terminal.hide_key,
+                M.focus,
+                { buffer = current.bufnr, desc = "切换 Agent" }
+            )
+        end
+        if config.options.terminal.start_insert then
+            vim.cmd.startinsert()
+        end
+        if config.options.terminal.show_hint and not hint_shown then
+            hint_shown = true
+            vim.notify(
+                "Ctrl-\\ Ctrl-n 后：q 隐藏，? 帮助；:Agent select 切换；:Agent stop 停止。",
+                vim.log.levels.INFO,
+                { title = "Agent · 操作提示" }
+            )
+        end
+        if current.bridge and config.options.terminal.show_hint then
+            vim.notify(
+                "Codex 修改跟踪：:Agent changes 文件列表；:Agent diff 差异；:Agent follow 跟随开关。",
+                vim.log.levels.INFO,
+                { title = "Agent Review" }
+            )
+        end
+        emit("AgentStart", current)
     end
-    current.job_id, current.state = job, "running"
-    vim.bo[current.bufnr].filetype = "agent_terminal"
-    vim.keymap.set("n", "q", M.hide, { buffer = current.bufnr, desc = "隐藏 Agent，会话继续运行" })
-    vim.keymap.set("n", "?", M.help, { buffer = current.bufnr, desc = "Agent 操作帮助" })
-    if config.options.terminal.hide_key and config.options.terminal.hide_key ~= "" then
-        vim.keymap.set(
-            { "n", "t" },
-            config.options.terminal.hide_key,
-            M.focus,
-            { buffer = current.bufnr, desc = "切换 Agent" }
-        )
+    if name == "codex" and config.options.codex.enabled then
+        review.attach(current, config.options.review)
+        bridge.start(current, env, spawn_terminal, function(message)
+            if session ~= current or current.stopping then
+                return
+            end
+            current.stopping = true
+            bridge.stop(current)
+            if current.job_id then
+                pcall(vim.fn.jobstop, current.job_id)
+            end
+            current.state, current.exit_code = "exited", -1
+            warn(message .. "；会话已停止，:Agent start 可重试。")
+        end)
+    else
+        spawn_terminal(command, env)
     end
-    if config.options.terminal.start_insert then
-        vim.cmd.startinsert()
-    end
-    if config.options.terminal.show_hint and not hint_shown then
-        hint_shown = true
-        vim.notify(
-            "Ctrl-\\ Ctrl-n 后：q 隐藏，? 帮助；:Agent select 切换；:Agent stop 停止。",
-            vim.log.levels.INFO,
-            { title = "Agent · 操作提示" }
-        )
-    end
-    emit("AgentStart", current)
 end
 
 local function choose(callback)
@@ -184,6 +222,8 @@ local function ensure_hooks()
                 return
             end
             local old = session
+            bridge.stop(old)
+            review.close()
             session = nil
             if old.job_id and old.state == "running" then
                 pcall(vim.fn.jobstop, old.job_id)
@@ -194,6 +234,8 @@ local function ensure_hooks()
         group = group,
         callback = function()
             selecting = nil
+            bridge.stop(session)
+            bridge.wait(session)
             if session and session.job_id then
                 session.stopping = true
                 pcall(vim.fn.jobstop, session.job_id)
@@ -266,7 +308,7 @@ function M.stop()
         return true
     end
     local old = session
-    if alive() then
+    if alive() and old.job_id then
         old.stopping = true
         local ok, result = pcall(vim.fn.jobstop, old.job_id)
         if not ok or result ~= 1 then
@@ -371,6 +413,36 @@ function M.select()
     end)
 end
 
+function M.code()
+    review.code()
+end
+
+function M.changes()
+    review.changes()
+end
+function M.filediff()
+    review.filediff()
+end
+
+function M.diff()
+    review.diff()
+end
+function M.follow()
+    review.follow()
+end
+function M.pause()
+    review.pause()
+end
+function M.turns()
+    review.turns()
+end
+function M.next()
+    review.jump(1)
+end
+function M.prev()
+    review.jump(-1)
+end
+
 function M.help()
     vim.cmd.stopinsert()
     vim.cmd.help("agent.nvim")
@@ -388,6 +460,8 @@ function M.status()
         job_id = session.job_id,
         exit_code = session.exit_code,
         visible = window.find(session) ~= nil,
+        bridge = session.bridge and { state = session.bridge.state, thread_id = session.bridge.thread_id } or nil,
+        review = review.status(),
     }
 end
 

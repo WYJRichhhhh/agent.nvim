@@ -4,7 +4,7 @@
 
 [English](README.md) · [反馈问题](https://github.com/WYJRichhhhh/agent.nvim/issues)
 
-**实验性的第一版**。纯 Lua、无强制插件依赖，要求 Neovim 0.11+；当前在 macOS、Neovim 0.12 测试。Linux、Windows 和不同 CLI 版本的完整体验尚未逐一验证，欢迎反馈。插件独立安装，不要求作者的个人配置、tmux、Ghostty、主题插件或 zsh。
+**实验性插件**。终端核心使用 Lua、无强制插件依赖，Codex 修改跟踪可选使用 Node.js helper，要求 Neovim 0.11+；当前在 macOS、Neovim 0.12 测试。Linux、Windows 和不同 CLI 版本的完整体验尚未逐一验证，欢迎反馈。插件独立安装，不要求作者的个人配置、tmux、Ghostty、主题插件或 zsh。
 
 ## 解决什么问题，谁能用
 
@@ -44,6 +44,57 @@
 首次自动发现到多个后端时弹出选择列表，选择在本次 Neovim 进程中保留。只有一个后端时直接启动；未发现可执行文件时提示检查 PATH。插件不检查或读取认证文件。
 
 `:Agent health` 会先通过 lazy 加载插件，再执行标准健康检查；插件已加载后也可以直接使用 `:checkhealth agent`。
+
+## Codex 实时修改跟踪（可选开启）
+
+保留 **Codex 原生 TUI**，同时在 Neovim 查看它的修改。需要 **Node.js 22+**、macOS/Linux，以及支持 `--remote`、App Server 和 capability-token 的 Codex；已在 **macOS / Codex 0.163.0** 实测。Windows 可以使用原来的纯终端模式。无需安装 npm 包、SDK，也无需额外密钥或登录。Claude 和自定义后端仍使用原来的终端方式。
+
+```lua
+opts = {
+    codex = { enabled = true },
+    window = { layout = "right", width = 0.42 },
+    review = { follow = true },
+    terminal = { hide_key = "<M-a>" },
+}
+```
+
+可将这些映射加入 lazy.nvim 的 `keys` 表。它们使用普通模式，CLI 输入状态下先按 **Ctrl-\、Ctrl-n**：
+
+| 示例快捷键 | 命令 | 行为 |
+| --- | --- | --- |
+| `<leader>ar` | `:Agent changes` | 修改文件列表，选择后打开文件 |
+| `<leader>ad` | `:Agent diff` | 整轮红绿差异，只读 |
+| `<leader>aD` | `:Agent filediff` | 最近选择文件的差异 |
+| `<leader>af` | `:Agent follow` | 开启/暂停自动跟随 |
+| `<leader>ae` | `:Agent code` | 聚焦最近选择/修改的源文件 |
+| `<leader>ah` | `:Agent turns` | 选择当前插件会话内的历史轮次 |
+| `<leader>an` / `<leader>ap` | `:Agent next` / `:Agent prev` | 在源文件中跳到下一处/上一处修改 |
+
+成功修改文件后，原编辑窗口打开该文件：新增行使用 `DiffAdd` 绿色背景，删除内容以 `DiffDelete` 红色虚拟行显示，不写入源文件。焦点留在 Codex，方便继续输入。建议使用右侧分屏；浮窗可能遮住代码。
+
+进入代码窗口、切换文件或开始编辑时会**自动暂停跟随**，避免抢走你的操作。`:Agent follow` 切换跟随状态；`:Agent pause` 明确暂停。任何未保存的 buffer 都不会被自动替换或重新加载；保存后再恢复跟随。未修改的已打开文件可以自动重新加载，保留原有 `autoread` 配置。
+
+差异窗口是只读 unified diff，按 `q` 返回原 buffer，按 `gf` 打开最近选择的源文件；不会停止 CLI。历史轮次和已删除文件优先显示补丁，避免把旧行号标到当前版本上。历史默认保留最近 20 轮，范围是本次插件会话；**不等于 Git 提交历史，也不是跨进程的聊天记录库**。
+
+### 数据来源与范围
+
+直接消费官方 App Server 的 `fileChange` 和 `turn/diff/updated` 事件，不解析 TUI 文本。列表只记录成功的文件修改，尚未批准、失败和被拒绝的修改不会混入。对比基准由 Codex 该轮记录的修改决定，不直接对比 Git HEAD，因此不会自动把开始任务前已有的全部改动算进去。
+
+通过 shell、格式化器或其他工具写入、但未产生文件修改事件的内容可能不在列表中；提交前仍应检查 `git diff`。超过 `review.max_diff_bytes` 的大补丁会跳过并提示。默认不打开启动目录之外的文件，符号链接的实际目标也会检查。
+
+协议参考：[Codex App Server](https://learn.chatgpt.com/docs/app-server)、[CLI 命令](https://learn.chatgpt.com/docs/developer-commands?surface=cli)。
+
+### 进程、登录与清理
+
+插件启动一个本机会话专属的 App Server，原生 TUI 和观察连接共同连接它。Node helper 只使用标准库，无 npm 依赖。服务仅监听 loopback，并使用每次生成的随机 capability token；该 token 通过进程管道和环境传递，不由插件写入配置或历史。它只是本地传输鉴权，不是 OpenAI API Key。Codex 仍读取普通 shell 中那套用户配置、环境和登录；观察连接不发起任务、不回答审批。
+
+会过滤 Codex 自动生成标题和子 Agent 的线程。新 TUI 会话尚未落盘时持续等待订阅；订阅成功后读取最近一轮文件条目，补回启动期间错过的修改。旧服务若不支持分页读取，仍可处理实时事件。
+
+隐藏保留 TUI、helper 和服务；停止、确认切换后端、删除终端 buffer、退出原生 TUI 或退出 Neovim 时会清理它们。连接异常会停止当前 CLI 并报告，不会悄悄另开第二个会话。CLI 自然退出后仍可检查已收到的差异，直到显式停止/重启时清理；resume 沿用原生恢复流程，不会完整重建以前所有轮次。
+
+`backends.codex.command[1]` 必须是 Codex 可执行文件，或能原样转发 `app-server` 参数的 wrapper。服务使用 `{ executable, "app-server", ... }` 启动，不会把额外 TUI 参数复制给服务；公共设置请放在普通 Codex 配置/环境中。`{ "zsh", "-ic", "codex" }` 这样的 shell 参数数组仅适用于关闭跟踪时的纯终端模式。
+
+设置 `codex.enabled = false` 可退回原来的直接终端模式。`:Agent health` 检查依赖，`:Agent status` 查看连接、轮次和跟随状态。此集成仍属实验功能；Linux 尚未用真实 CLI 验证，后续 Codex 协议变化可能需要调整适配。
 
 ## 单会话规则
 
@@ -117,7 +168,10 @@ require("agent").setup({
     terminal = {
         start_insert = true,
         hide_key = false,
+        show_hint = true,
     },
+    codex = { enabled = false, node = "node", startup_timeout = 15000 },
+    review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true },
     backends = {
         claude = { label = "Claude Code", command = { "claude" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
@@ -149,7 +203,7 @@ require("agent").register_backend("local_agent", {
 
 注册后可以执行 `:Agent start local_agent`。自动发现只检查 `command[1]` 是否为可执行文件，不启动进程或探测账号状态。
 
-Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focus`、`start`、`resume`、`stop`、`select` 和 `status`。`toggle()` 是按可见性切换；`focus()` 在其他代码窗口中优先聚焦 Agent，已经聚焦时才隐藏。
+Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focus`、`start`、`resume`、`stop`、`select`、`status`、`help`、`changes`、`diff`、`filediff`、`follow`、`pause`、`code`、`turns`、`next` 和 `prev`。`toggle()` 是按可见性切换；`focus()` 在其他代码窗口中优先聚焦 Agent，已经聚焦时才隐藏。
 
 ## 验证
 
@@ -157,9 +211,12 @@ Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focu
 
 ```sh
 nvim --headless -u NONE -l tests/run.lua
+nvim --headless -u NONE -l tests/review.lua
+nvim --headless -u NONE -l tests/bridge.lua
+node --test tests/websocket.mjs
 ```
 
-测试使用真实 PTY，但不调用模型或读取认证文件。覆盖单进程复用、隐藏时交互、未提交输入、工作目录、环境变量、退出处理、分屏、窗口手动关闭和异步后端选择。
+测试使用真实 PTY，但不调用模型或读取认证文件。bridge/传输测试仅启动临时 loopback 服务；还覆盖订阅重试、标题线程过滤、审批不被观察连接代答、未保存内容保护、历史/重命名/删除、红绿渲染和服务清理。覆盖单进程复用、隐藏时交互、未提交输入、工作目录、环境变量、退出处理、分屏、窗口手动关闭和异步后端选择。
 
 真实 CLI 的中文输入法和 TUI 重绘体验仍应在用户自己的终端内验证。
 

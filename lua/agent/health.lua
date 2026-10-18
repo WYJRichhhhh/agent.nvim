@@ -17,6 +17,23 @@ function M.check()
     if #found == 0 then
         vim.health.error("至少需要一个可用后端")
     end
+    if require("agent.config").options.codex.enabled then
+        local node = require("agent.config").options.codex.node
+        if vim.fn.executable(node) == 1 then
+            local result = vim.system({ node, "--version" }, { text = true }):wait()
+            local major = tonumber((result.stdout or ""):match("v(%d+)"))
+            if major and major >= 22 then
+                vim.health.ok("Codex bridge Node.js: " .. vim.trim(result.stdout))
+            else
+                vim.health.error("Codex bridge 需要 Node.js 22+")
+            end
+        else
+            vim.health.error("Codex bridge 找不到 Node.js: " .. node)
+        end
+        vim.health.info(
+            "Codex bridge 需要支持 --remote / capability-token 的 CLI；已验证 0.163.0。Claude 不使用 bridge。"
+        )
+    end
     vim.health.info("登录状态由原生 CLI 管理。这里只检查可执行文件，不读取认证信息。")
 end
 return M

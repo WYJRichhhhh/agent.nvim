@@ -24,6 +24,29 @@ function M.find(session)
     end
 end
 
+local function label(session)
+    local review = require("agent.review").status()
+    local suffix = review.enabled
+            and ((review.follow and " · 跟随" or " · 暂停") .. " · " .. review.files .. " 文件")
+        or ""
+    return session.backend .. suffix
+end
+
+function M.refresh(session)
+    local win = M.find(session)
+    if not win then
+        return
+    end
+    if vim.api.nvim_win_get_config(win).relative == "" then
+        vim.wo[win].winbar = "Agent: " .. label(session)
+    else
+        vim.api.nvim_win_set_config(
+            win,
+            { title = (" %s · %s "):format(label(session), session.cwd):gsub("[%c]", " "), title_pos = "center" }
+        )
+    end
+end
+
 local function size(value, total)
     return math.max(1, math.min(total, math.floor(value <= 1 and total * value or value)))
 end
@@ -41,7 +64,7 @@ local function float_config(session)
         height = height,
         col = math.max(0, math.floor((vim.o.columns - width) / 2) - 1),
         row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
-        title = (" %s · %s "):format(session.backend, session.cwd):gsub("[%c]", " "),
+        title = (" %s · %s "):format(label(session), session.cwd):gsub("[%c]", " "),
         title_pos = "center",
     }
 end
@@ -64,7 +87,7 @@ function M.show(session)
             vim.cmd(("botright %d%s"):format(amount, vertical and "vsplit" or "split"))
             win = vim.api.nvim_get_current_win()
             vim.api.nvim_win_set_buf(win, session.bufnr)
-            vim.wo[win].winbar = ("Agent: %s"):format(session.backend)
+            vim.wo[win].winbar = ("Agent: %s"):format(label(session))
         end
         vim.wo[win].number = false
         vim.wo[win].relativenumber = false

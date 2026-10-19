@@ -75,10 +75,63 @@ local ok, err = xpcall(function()
         vim.api.nvim_feedkeys("q", "x", false)
         assert(vim.api.nvim_get_current_buf() == vim.api.nvim_win_get_buf(editor))
     end)
-    check("手动进入编辑窗口会暂停跟随", function()
+    check("阅读不暂停、不抢视图，回到 Agent 后跟到最新修改", function()
+        vim.api.nvim_set_current_win(agentwin)
+        attach()
+        event("before-reading")
+        vim.api.nvim_set_current_win(editor)
+        vim.api.nvim_win_set_cursor(editor, { 2, 0 })
+        local original = vim.api.nvim_win_get_buf(editor)
+        local next_path = root .. "/reading.txt"
+        vim.fn.writefile({ "new" }, next_path)
+        event("while-reading", next_path)
+        assert(review.status().follow)
+        assert(review.status().files == 2)
+        assert(vim.api.nvim_win_get_buf(editor) == original)
+        assert(vim.api.nvim_win_get_cursor(editor)[1] == 2)
+        vim.api.nvim_set_current_win(agentwin)
+        assert(vim.wait(1000, function()
+            return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(editor)) == next_path
+        end))
+        assert(review.status().follow)
+        vim.api.nvim_win_set_buf(editor, original)
+    end)
+    check("隐藏再唤起自动跟到后台修改，不重建会话", function()
+        attach()
+        event("before-hide")
+        local window = require("agent.window")
+        window.hide(session)
+        assert(review.status().follow)
+        local oldbuf = vim.api.nvim_win_get_buf(editor)
+        local next_path = root .. "/hidden.txt"
+        vim.fn.writefile({ "hidden edit" }, next_path)
+        event("while-hidden", next_path)
+        assert(vim.api.nvim_win_get_buf(editor) == oldbuf)
+        agentwin = window.show(session)
+        assert(vim.wait(1000, function()
+            return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(editor)) == next_path
+        end))
+        assert(review.status().follow)
+        vim.api.nvim_win_set_buf(editor, vim.fn.bufnr(path))
+    end)
+    check("开始编辑才暂停，回到 Agent 不自动取消明确暂停", function()
         vim.api.nvim_set_current_win(agentwin)
         attach()
         vim.api.nvim_set_current_win(editor)
+        vim.api.nvim_exec_autocmds("InsertEnter", { buffer = vim.api.nvim_get_current_buf() })
+        assert(not review.status().follow)
+        vim.api.nvim_set_current_win(agentwin)
+        vim.wait(50, function()
+            return false
+        end)
+        assert(not review.status().follow)
+        attach()
+        review.pause()
+        vim.api.nvim_set_current_win(editor)
+        vim.api.nvim_set_current_win(agentwin)
+        vim.wait(50, function()
+            return false
+        end)
         assert(not review.status().follow)
     end)
     check("目标文件未保存时不覆盖 buffer，不自动跳转", function()
@@ -171,6 +224,39 @@ local ok, err = xpcall(function()
         assert(loaded == 1, "batch loaded " .. loaded .. " buffers")
         assert(review.status().files == 20)
         assert(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(editor)) == changes[#changes].path)
+    end)
+    check("会话文件列表跨轮去重，选中当前文件显示行内差异", function()
+        vim.api.nvim_set_current_win(agentwin)
+        attach()
+        event("session-first")
+        review.event("turn/started", { turn = { id = "turn2" } })
+        local next_path = root .. "/second.txt"
+        vim.fn.writefile({ "second" }, next_path)
+        review.event("item/completed", {
+            turnId = "turn2",
+            item = {
+                type = "fileChange",
+                id = "second",
+                status = "completed",
+                changes = {
+                    { path = next_path, kind = { type = "update" }, diff = "@@ -1 +1 @@\n-first\n+second\n" },
+                    { path = path, kind = { type = "update" }, diff = "@@ -1 +1 @@\n-before\n+later\n" },
+                },
+            },
+        })
+        local original = vim.ui.select
+        vim.ui.select = function(entries, _, cb)
+            assert(#entries == 2)
+            assert(entries[1].turn_id == "turn2")
+            cb(entries[1])
+        end
+        review.changes()
+        vim.ui.select = original
+        assert(not review.status().follow)
+        local buf = vim.api.nvim_win_get_buf(editor)
+        assert(vim.api.nvim_get_current_win() == editor)
+        assert(vim.api.nvim_buf_get_name(buf) == next_path)
+        assert(#vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace("AgentReview"), 0, -1, {}) == 2)
     end)
     check("多 hunk 及删除文件可解析，停止清理高亮", function()
         local hunks = review.hunks("@@ -1 +0,0 @@\n-gone\n@@ -4,0 +4 @@\n+new\n")

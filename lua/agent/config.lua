@@ -17,6 +17,7 @@ M.defaults = {
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
     review = {
         follow = true,
+        picker = "auto",
         history_limit = 20,
         max_diff_bytes = 2 * 1024 * 1024,
         restrict_to_cwd = true,
@@ -84,6 +85,10 @@ function M.resolve(opts)
     assert(
         type(result.codex.startup_timeout) == "number" and result.codex.startup_timeout >= 1000,
         "startup_timeout 至少为 1000ms"
+    )
+    assert(
+        vim.tbl_contains({ "auto", "ui_select" }, result.review.picker),
+        "review.picker 必须是 auto 或 ui_select"
     )
     for _, key in ipairs({ "follow", "restrict_to_cwd", "git_fallback", "worktrees" }) do
         assert(type(result.review[key]) == "boolean", "review." .. key .. " 必须是布尔值")

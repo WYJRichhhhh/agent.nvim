@@ -1,6 +1,7 @@
 local M = {}
 local ns = vim.api.nvim_create_namespace("AgentReview")
 local state, group, updating = nil, nil, false
+local open_file
 
 local function notify(message)
     vim.notify(message, vim.log.levels.INFO, { title = "Agent Review" })
@@ -44,19 +45,42 @@ function M.attach(session, options)
     M.close()
     state = { session = session, options = options, follow = options.follow, turns = {}, order = {}, marked = {} }
     group = vim.api.nvim_create_augroup("AgentReview", { clear = true })
-    vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "InsertEnter", "TextChanged", "TextChangedI" }, {
+    vim.api.nvim_create_autocmd({ "InsertEnter", "TextChanged", "TextChangedI" }, {
         group = group,
         callback = function(ev)
             if updating or not state or not state.follow then
                 return
             end
-            if vim.bo[ev.buf].buftype == "" and not vim.b[ev.buf].agent_session then
+            if
+                vim.bo[ev.buf].buftype == ""
+                and not vim.b[ev.buf].agent_session
+                and (ev.event == "InsertEnter" or vim.bo[ev.buf].modified)
+            then
                 state.follow = false
                 refresh()
                 notify(
-                    "已暂停自动跟随，避免打断编辑。:Agent follow 恢复；:Agent changes 查看修改。"
+                    "已开始编辑，自动跟随已暂停。:Agent follow 恢复；:Agent changes 查看修改。"
                 )
             end
+        end,
+    })
+    vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "TermEnter" }, {
+        group = group,
+        callback = function()
+            local captured = state
+            -- Run after the focus change settles; ignore stale sessions and explicit pauses.
+            vim.schedule(function()
+                if state ~= captured or not state or not state.follow or not state.pending then
+                    return
+                end
+                if vim.api.nvim_get_current_buf() == state.session.bufnr then
+                    local entry = state.pending
+                    state.pending = nil
+                    if entry == state.last_change and entry.turn_id == state.latest then
+                        open_file(entry, false)
+                    end
+                end
+            end)
         end,
     })
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufReadPost" }, {
@@ -201,10 +225,16 @@ local function mark(buf, entry)
     state.marked[buf] = true
 end
 
-local function open_file(entry, focus)
+open_file = function(entry, focus)
     if not state then
         return
     end
+    if not focus and vim.api.nvim_get_current_buf() ~= state.session.bufnr then
+        -- Keep the reader's file, cursor and scroll position stable; metadata still updates.
+        state.pending = entry
+        return
+    end
+    state.pending = nil
     local path = path_for(entry.path)
     if not path or vim.fn.filereadable(path) ~= 1 then
         if focus then
@@ -420,7 +450,8 @@ function M.follow()
     end
     state.follow = not state.follow
     notify(
-        state.follow and "自动跟随已开启；进入代码窗口或编辑时自动暂停。"
+        state.follow
+                and "自动跟随已开启；阅读时保留视图，回到 Agent 后跟到最新修改，编辑时暂停。"
             or "自动跟随已暂停。"
     )
     refresh()
@@ -445,17 +476,25 @@ function M.changes(id)
         notify("当前会话未启用 Codex 修改跟踪。")
         return
     end
-    local round = state.turns[id or state.view_turn or state.latest]
-    if not round or #round.order == 0 then
-        notify("这一轮尚无成功的文件修改。")
+    local entries, seen = {}, {}
+    local rounds = id and { id } or vim.fn.reverse(vim.deepcopy(state.order))
+    for _, turn_id in ipairs(rounds) do
+        local round = state.turns[turn_id]
+        for _, path in ipairs(round and round.order or {}) do
+            if not seen[path] and round.files[path] then
+                entries[#entries + 1] = round.files[path]
+                seen[path] = true
+            end
+        end
+    end
+    if #entries == 0 then
+        notify("尚无已记录的成功文件修改。")
         return
     end
-    local entries = vim.tbl_map(function(path)
-        return round.files[path]
-    end, round.order)
     local captured = state
-    vim.ui.select(entries, {
-        prompt = "Agent 修改（选择打开文件，:Agent diff 查看差异）",
+    require("agent.picker").select(entries, {
+        picker = state.options.picker or "auto",
+        prompt = id and "Agent 本轮修改文件" or "Agent 会话修改文件",
         format_item = function(entry)
             return (entry.kind or "update")
                 .. (entry.source == "git" and " [Git]" or "")
@@ -696,8 +735,6 @@ function M.code()
         notify("当前会话未启用 Codex 修改跟踪。")
         return
     end
-    state.follow = false
-    refresh()
     if state.current then
         open_file(state.current, true)
     elseif valid_win(state.session.return_win) then

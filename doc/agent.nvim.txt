@@ -62,9 +62,10 @@ capability-token 的 Codex。已验证 macOS + Codex 0.163.0。Claude 不使用�
 原生 TUI 负责输入与审批；观察连接只接收结构化修改事件。
 成功修改后，原编辑窗口打开真实文件，新增标绿、删除显示红色虚拟行，
 批量事件仅打开最后一个文件，清单保留全部；焦点保留在 TUI。
-进入代码窗口或编辑会自动暂停，不覆盖任何未保存内容。
+阅读代码或隐藏 Agent 时保留视图并继续记录修改，回到 Agent 后自动跟到最新修改。
+开始编辑才自动暂停；编辑或手动暂停后须 :Agent follow 恢复。不覆盖未保存内容。
 
-    :Agent changes          当前/选定轮次的修改文件清单
+    :Agent changes          当前会话保留轮次的修改文件清单（路径去重）
     :Agent diff             整轮 unified diff，只读红绿对比
     :Agent filediff         最近选择文件的补丁
     :Agent follow           切换自动跟随，恢复时回到最近修改
@@ -75,6 +76,9 @@ capability-token 的 Codex。已验证 macOS + Codex 0.163.0。Claude 不使用�
 
 差异 buffer：q 返回原 buffer；gf 打开光标所在文件。不会停止 CLI。
 历史轮次/删除文件显示补丁，不把旧差异标到当前源文件上。
+已安装 Telescope 时文件列表可搜索并预览 diff；回车在代码区打开红绿差异。
+选择文件暂停自动跳转，取消不改变跟随。默认保留 20 轮，:Agent turns 按轮查看。
+review.picker="ui_select" 强制使用 vim.ui.select；默认 "auto" 自动发现 Telescope。
 这些命令需从 Neovim 普通模式执行：CLI 输入状态先按 Ctrl-\、Ctrl-n。
 README 提供 <leader>ar/ad/ag/aD/af/ae/ah/an/ap 映射示例；插件不创建全局按键。
 

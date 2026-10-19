@@ -140,14 +140,14 @@ local function launch(name, cwd, command_override)
         end
         if current.bridge and config.options.terminal.show_hint then
             vim.notify(
-                "Codex 修改跟踪：:Agent changes 文件列表；:Agent diff 差异；:Agent follow 跟随开关。",
+                "修改跟踪：:Agent changes 文件列表；:Agent diff 差异；:Agent follow 跟随开关。",
                 vim.log.levels.INFO,
                 { title = "Agent Review" }
             )
         end
         emit("AgentStart", current)
     end
-    if name == "codex" and config.options.codex.enabled then
+    if (name == "codex" or name == "claude") and config.options[name].enabled then
         review.attach(current, config.options.review)
         bridge.start(current, env, spawn_terminal, function(message)
             if session ~= current or current.stopping then

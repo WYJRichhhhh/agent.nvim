@@ -4,7 +4,7 @@
 
 [English](README.md) · [反馈问题](https://github.com/WYJRichhhhh/agent.nvim/issues)
 
-**实验性插件**。终端核心使用 Lua、无强制插件依赖，Codex 修改跟踪可选使用 Node.js helper，要求 Neovim 0.11+；当前在 macOS、Neovim 0.12 测试。Linux、Windows 和不同 CLI 版本的完整体验尚未逐一验证，欢迎反馈。插件独立安装，不要求作者的个人配置、tmux、Ghostty、主题插件或 zsh。
+**实验性插件**。终端核心使用 Lua、无强制插件依赖，Codex/Claude 修改跟踪可选使用 Node.js helper，要求 Neovim 0.11+；当前在 macOS、Neovim 0.12 测试。Linux、Windows 和不同 CLI 版本的完整体验尚未逐一验证，欢迎反馈。插件独立安装，不要求作者的个人配置、tmux、Ghostty、主题插件或 zsh。
 
 ## 解决什么问题，谁能用
 
@@ -109,6 +109,40 @@ Git 项目默认启用 `review.git_fallback`：在任务开始时记录本地工
 
 设置 `codex.enabled = false` 可退回原来的直接终端模式。`:Agent health` 检查依赖，`:Agent status` 查看连接、轮次和跟随状态。此集成仍属实验功能；Linux 尚未用真实 CLI 验证，后续 Codex 协议变化可能需要调整适配。
 
+## Claude Code 修改跟踪（可选开启）
+
+Claude 保留原生交互 TUI，使用**当前会话专用的命令 Hooks**接入，不使用 Codex App Server：
+
+```lua
+opts = {
+    claude = { enabled = true },
+    codex = { enabled = true }, -- 可选；两个后端各有适配器
+    window = { layout = "right", width = 0.42 },
+    review = { follow = true, picker = "auto" },
+}
+```
+
+要求 **macOS/Linux、Node.js 22+、Git**，以及支持 `--settings` 和生命周期/工具 Hooks 的 Claude Code。非 Git 目录也需要 Git，用 `git diff --no-index` 生成文本补丁。已在 **macOS、Claude Code 2.1.210** 上验证真实工具修改、Hook 回传、Neovim 红绿标记及自然退出。Linux 尚未用真实 Claude 会话验证；Windows 目前使用纯终端模式。
+
+通过 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`Stop`、`SessionEnd` 接收事件。提交问题开始新一轮；`Edit`、`Write`、`MultiEdit`、`NotebookEdit` 执行前保存有大小限制的文件原文，执行后按磁盘实际内容生成相对本轮首次记录的累计补丁。Git 项目在 `review.git_fallback=true` 时另用任务前基线检测脚本及已注册 worktree 的修改。
+
+Claude 复用与 Codex 相同的文件清单、Telescope 搜索/补丁预览、红绿标记、跟随及阅读保持逻辑。`changes / diff / filediff / follow / code / turns / next / prev / gitdiff` 均可使用。CLI 退出后可用 `:Agent resume claude` 打开 Claude 原生历史选择器；不会重建旧对话的补丁。
+
+插件只在自己启动的 CLI 参数中增加临时 `--settings` JSON，保留普通用户/项目设置；若 `backends.claude.command` 已有一个 JSON 或文件形式的 `--settings`，在内存中合并其选项和 Hooks，不改写原文件。该文件只在启动时读取，后续变更需重启会话。`command[1]` 应是 CLI 或原样转发追加参数的 wrapper；吞掉参数的 shell 包装命令不支持跟踪模式。命令 Hook 使用配置的 Node 可执行文件和 POSIX shell 转义，不依赖交互式 zsh/fish 的初始化文件。
+
+Hook 向仅监听本机、随机令牌鉴权的 HTTP 服务发送精简事件，不传输提示词、工具返回正文、文件内容或认证凭证；本地适配器自行读取允许范围内的文件生成补丁。令牌通过管道/环境传递，不写入 CLI 参数设置或持久配置。插件不调用 Anthropic SDK/API，不改模型、登录或审批。Hook 客户端保持静默，即使观察通道失败也成功返回，不阻止 Claude 工具执行；快照处理会短暂等待，客户端最长等待 `claude.hook_timeout`（默认 10 秒），超时可能漏掉基线或更新，服务能检测到时会警告。隐藏保留 helper，停止/切换/删终端/退出 Neovim 会清理；自然退出后已收到的修改可继续查看，直到显式停止或重启。
+
+### Claude 的限制与排查
+
+- **必须允许 Hooks**：未接受目录信任、`disableAllHooks`、组织策略、`--bare`、`--safe-mode` 等可能使跟踪失效。显式冲突的启动设置会报错；全局/策略限制可能只表现为 `:Agent status` 的 `bridge.state="waiting"`，等待后会提示检查 Claude `/hooks`。插件不会绕过策略或强行启用 Hooks。设置 `claude.enabled=false` 可退回原始终端模式。
+- **无法追溯或旁接任意已有 CLI**：只跟踪由插件启动的会话及后续捕获的修改，恢复历史对话也不会重建此前补丁。旧任务可用 `:Agent gitdiff` 查看当前相对 HEAD 的已跟踪文件差异，但它含任务前已有修改。
+- **非 Git 目录仅覆盖已接入的文件工具**：Shell、自定义/MCP 工具、任意后台进程、未经过已支持文件工具的移动/删除、缺失有效修改前 Hook 的写入，需要 Git 兜底，否则无法捕获。暂未消费 Claude 专属 `bashEditDiff`、文件系统 `FileChanged` 或对话日志。Notebook 显示 JSON 文本补丁，不提供单元格级专用界面。
+- **磁盘变化不等于精确归因**：并发写入、失败工具已造成的部分修改可能被收集。与父会话 ID 相同的子 Agent 工具修改归入父轮次，不同会话 ID 被忽略；没有独立的子 Agent 审查窗。跨轮次的后台写入可能归到后续扫描。
+- **大小及范围限制仍适用**：二进制、超大、范围外或符号链接目标会跳过。Git 兜底不含忽略文件，但范围内的文本文件即使被 Git 忽略，仍可由直接文件工具 Hooks 捕获。原生修改前缓存和 Git 快照各自受 `review.max_snapshot_bytes` 限制；单文件/补丁受 `review.max_diff_bytes` 限制。默认保留最近 20 轮，历史/删除文件显示只读补丁。
+- 真实模型实测覆盖 macOS 文件工具修改；本地自动化额外覆盖累计编辑/撤销、失败工具、设置合并、Hook 鉴权、会话隔离、Git 脚本/worktree 修改、隐藏/显示及清理。其他 CLI 版本、组织策略或平台可能不同，反馈时可附版本和 `:Agent status`，勿附凭证。
+
+官方参考：[Claude Code Hooks](https://code.claude.com/docs/en/hooks)、[CLI 配置参数](https://code.claude.com/docs/en/cli-reference)。
+
 ## 单会话规则
 
 一个 Neovim 实例同时维护一个 Agent 会话。显示和隐藏复用同一终端 buffer 与进程，不会清空未提交的输入。CLI 在隐藏时仍可以继续运行任务。
@@ -185,10 +219,11 @@ require("agent").setup({
         capture_mouse = true,
     },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
+    claude = { enabled = false, node = "node", startup_timeout = 15000, hook_timeout = 10000 },
     review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true,
         git_fallback = true, worktrees = true, max_snapshot_bytes = 32 * 1024 * 1024 },
     backends = {
-        claude = { label = "Claude Code", command = { "claude" }, env = {} },
+        claude = { label = "Claude Code", command = { "claude" }, resume_command = { "claude", "--resume" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
     },
 })
@@ -228,9 +263,10 @@ Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focu
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/review.lua
 nvim --headless -u NONE -l tests/bridge.lua
+nvim --headless -u NONE -l tests/claude.lua
 nvim --headless -u NONE -l tests/git-bridge.lua
 nvim --headless -u NONE -l tests/mouse.lua
-node --test tests/websocket.mjs tests/git-review.mjs
+node --test tests/websocket.mjs tests/git-review.mjs tests/claude-review.mjs tests/claude-transport.mjs
 python3 tests/ui_resize.py # 仅开发测试需要 Python msgpack 包
 ```
 

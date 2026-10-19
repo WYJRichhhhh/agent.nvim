@@ -2,10 +2,13 @@ local M = {}
 local root = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))))
 
 function M.start(session, env, ready, failure)
-    local options = require("agent.config").options.codex
+    local backend = session.backend
+    local options = require("agent.config").options[backend]
     local node = vim.fn.exepath(options.node)
     if node == "" then
-        failure("Codex 修改跟踪需要 Node.js 22+；安装后重试，或设置 codex.enabled=false。")
+        failure(
+            backend .. " 修改跟踪需要 Node.js 22+；安装后重试，或关闭对应后端的 enabled 选项。"
+        )
         return
     end
     local bridge = { pending = "", stopped = false, state = "starting" }
@@ -22,7 +25,11 @@ function M.start(session, env, ready, failure)
             return
         end
         if value.type == "ready" then
-            bridge.state = "ready"
+            bridge.state = value.state or "ready"
+            if backend == "claude" then
+                ready(value.command, vim.tbl_extend("force", {}, env, value.env))
+                return
+            end
             local command = vim.deepcopy(session.command)
             vim.list_extend(
                 command,
@@ -37,12 +44,12 @@ function M.start(session, env, ready, failure)
         elseif value.type == "event" then
             require("agent.review").event(value.method, value.params)
         elseif value.type == "warning" then
-            vim.notify(value.message, vim.log.levels.WARN, { title = "Agent Codex" })
+            vim.notify(value.message, vim.log.levels.WARN, { title = "Agent " .. backend })
         elseif value.type == "error" then
             fail(value.message)
         end
     end
-    bridge.job = vim.fn.jobstart({ node, root .. "/scripts/codex-bridge.mjs" }, {
+    bridge.job = vim.fn.jobstart({ node, root .. "/scripts/" .. backend .. "-bridge.mjs" }, {
         cwd = session.cwd,
         env = next(env) and env or vim.empty_dict(),
         on_stdout = function(_, data)
@@ -53,7 +60,7 @@ function M.start(session, env, ready, failure)
             local lines = vim.split(text, "\n", { plain = true })
             bridge.pending = table.remove(lines)
             if #bridge.pending > 40 * 1024 * 1024 then
-                fail("Codex bridge message exceeds limit")
+                fail("Agent bridge message exceeds limit")
                 return
             end
             for _, line in ipairs(lines) do
@@ -66,17 +73,19 @@ function M.start(session, env, ready, failure)
         on_stderr = function() end,
         on_exit = function(_, code)
             if not bridge.stopped then
-                fail("Codex bridge 已退出（" .. code .. "）；请检查 :Agent health。")
+                fail(backend .. " bridge 已退出（" .. code .. "）；请检查 :Agent health。")
             end
         end,
     })
     if bridge.job <= 0 then
-        fail("无法启动 Codex bridge")
+        fail("无法启动 " .. backend .. " bridge")
         return
     end
     vim.fn.chansend(bridge.job, vim.json.encode({
         type = "start",
         executable = session.command[1],
+        command = session.command,
+        hook_timeout = options.hook_timeout,
         cwd = session.cwd,
         timeout = options.startup_timeout,
         review = require("agent.config").options.review,

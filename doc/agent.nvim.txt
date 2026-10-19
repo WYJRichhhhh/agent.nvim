@@ -51,7 +51,8 @@ Alt-a 只负责显示/隐藏，不会重新弹出后端菜单。
 Codex 修改跟踪                                         *agent.nvim-review*
 
 可选开启，需要 Node.js 22+、macOS/Linux，以及支持 --remote / App Server /
-capability-token 的 Codex。已验证 macOS + Codex 0.163.0。Claude 不使用此功能。
+capability-token 的 Codex。已验证 macOS + Codex 0.163.0。
+Claude 可独立开启 Hooks 修改跟踪，见下方 Claude 说明。
 >
     require('agent').setup({
         codex = { enabled = true },
@@ -113,6 +114,37 @@ waiting 表示尚未落盘，首次任务开始后会继续订阅。
 关闭 codex.enabled 即使用原来的直接终端。启用时 command[1] 必须能执行
 app-server 子命令；shell argv 包装方式只适用于直接终端模式。
 更详细的依赖、进程所有权、登录继承和范围说明见中英文 README。
+
+Claude 修改跟踪                                      *agent.nvim-claude*
+>
+    require('agent').setup({ claude = { enabled = true } })
+<
+需要 macOS/Linux、Node.js 22+、Git，以及支持 --settings/Hooks 的 Claude Code。
+已实测 macOS + Claude Code 2.1.210 的真实文件修改与红绿展示。Windows 用纯终端。
+使用会话专用 Hooks，保留原生 TUI、登录与审批；不修改用户/项目设置文件。
+若 command 已有一个 --settings JSON/文件，会在启动时合并选项与 Hooks。
+UserPromptSubmit 建立轮次；Edit/Write/MultiEdit/NotebookEdit 前后比较实际文件；
+Git 项目可补充脚本与已注册 worktree 的写入。与 Codex 共用上述全部审查命令。
+:Agent resume claude 在 CLI 退出后打开原生历史选择器，不重建历史补丁。
+
+阅读代码不暂停，返回 Agent 自动追到最新修改；编辑或手动选择文件后暂停，
+:Agent follow 恢复。历史/删除文件显示只读补丁，清单默认保留最近 20 轮。
+
+限制：需接受目录信任并允许 Hooks；disableAllHooks、组织策略、--bare 或
+--safe-mode 可能禁用观察。waiting 表示尚未收到 Hooks，检查 Claude /hooks。
+不会绕过策略；claude.enabled=false 可退回纯终端。无法旁接任意已有 CLI。
+非 Git 目录只覆盖上述文件工具；Shell/MCP/后台写入需要 Git 兜底或不可见。
+未接入 bashEditDiff、FileChanged 或历史日志；Notebook 展示 JSON 文本补丁。
+并发/部分失败写入可能被统计；同 session_id 子 Agent 写入归父轮，不同 ID 忽略。
+不提供子 Agent 独立审查，后台跨轮写入可能归后续扫描。大小、范围限制仍适用。
+原生缓存与 Git 快照各自受 max_snapshot_bytes 限制，补丁受 max_diff_bytes 限制。
+Hook 客户端静默失败不阻止 Claude；超时可能漏报。CLI 自然退出保留已收到记录。
+更完整的验证范围与限制见 README 的 Claude 章节。
+
+    claude.enabled          false，是否启用 Claude Hooks 适配器
+    claude.node             'node'，Node 可执行文件
+    claude.startup_timeout  15000，启动超时/未收到 Hooks 时提示的等待毫秒数
+    claude.hook_timeout     10000，每次 Hook 客户端最长等待毫秒数
 
 配置                                                   *agent.nvim-setup*
 >

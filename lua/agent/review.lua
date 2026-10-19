@@ -445,7 +445,7 @@ end
 
 function M.follow()
     if not state then
-        notify("当前会话未启用 Codex 修改跟踪。")
+        notify("当前会话未启用修改跟踪。")
         return
     end
     state.follow = not state.follow
@@ -473,7 +473,7 @@ end
 
 function M.changes(id)
     if not state then
-        notify("当前会话未启用 Codex 修改跟踪。")
+        notify("当前会话未启用修改跟踪。")
         return
     end
     local entries, seen = {}, {}
@@ -518,7 +518,7 @@ end
 
 function M.turns()
     if not state then
-        notify("当前会话未启用 Codex 修改跟踪。")
+        notify("当前会话未启用修改跟踪。")
         return
     end
     local captured, rounds = state, {}
@@ -540,7 +540,7 @@ end
 
 function M.diff(value, root)
     if not state then
-        notify("当前会话未启用 Codex 修改跟踪。")
+        notify("当前会话未启用修改跟踪。")
         return
     end
     local round = state.turns[state.view_turn or state.latest]
@@ -732,7 +732,7 @@ end
 
 function M.code()
     if not state then
-        notify("当前会话未启用 Codex 修改跟踪。")
+        notify("当前会话未启用修改跟踪。")
         return
     end
     if state.current then

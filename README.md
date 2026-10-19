@@ -24,7 +24,7 @@ Run `:Agent help` (or `:help agent.nvim`) for the operation guide. While typing 
 - Users of bash, fish, zsh or other shells: **the default launcher does not invoke a shell**.
 - Users of other Neovim configurations and plugin managers. There are no mandatory plugin dependencies.
 
-Requirements: **Neovim 0.11+**, and at least one CLI executable visible in **Neovim's PATH**. The terminal host is Lua; optional Codex review adds a Node.js 22+ helper. Python 3 is needed only for development tests.
+Requirements: **Neovim 0.11+**, and at least one CLI executable visible in **Neovim's PATH**. The terminal host is Lua; optional Codex/Claude review adds a Node.js 22+ helper. Python 3 is needed only for development tests.
 
 Locally tested on macOS with Neovim 0.12. Linux, Windows, different terminal emulators and CLI versions have not all been validated end to end; executable discovery and TUI rendering may differ. Please report problems rather than assuming identical terminal behavior everywhere.
 
@@ -86,7 +86,7 @@ Inside the terminal, CLI keys such as Esc and Ctrl-C keep their native meanings.
 
 ## Codex live changes (opt in)
 
-Keep Codex's native TUI while viewing its edits in Neovim. Requires **Node.js 22+**, macOS/Linux, and a Codex CLI with `--remote`, App Server and capability-token support; validated with **Codex 0.163.0 on macOS**. Windows can use terminal-only mode. No npm packages, SDK, API keys or extra login are required. Claude/custom backends stay terminal-only.
+Keep Codex's native TUI while viewing its edits in Neovim. Requires **Node.js 22+**, macOS/Linux, and a Codex CLI with `--remote`, App Server and capability-token support; validated with **Codex 0.163.0 on macOS**. Windows can use terminal-only mode. No npm packages, SDK, API keys or extra login are required. Claude has its own opt-in Hook adapter below; custom backends stay terminal-only.
 
 ```lua
 opts = {
@@ -191,6 +191,38 @@ Shell aliases/functions are not executables. Environment variables set only in a
 
 If a command works in your shell but not in the plugin, inspect `:echo exepath('codex')`, `:echo $PATH` and `:Agent health`. Fix the environment that launches Neovim, configure an absolute executable path, or provide your own executable wrapper. You can explicitly configure a shell argv if you need one, but its arguments and startup behavior are your choice; the plugin does not guess a portable login-shell invocation or concatenate user input into shell commands.
 
+## Claude Code live changes (opt in)
+
+Claude uses its **native interactive CLI plus session-scoped command Hooks**, not the Codex App Server protocol. Enable it independently:
+
+```lua
+opts = {
+    claude = { enabled = true },
+    codex = { enabled = true }, -- optional; each backend has its own adapter
+    window = { layout = "right", width = 0.42 },
+    review = { follow = true, picker = "auto" },
+}
+```
+
+Requirements: **macOS/Linux, Node.js 22+, Git**, and a Claude Code CLI supporting `--settings` and the lifecycle/tool Hooks. Git is required even outside repositories to generate text patches with `git diff --no-index`. A real tool edit, hook roundtrip, Neovim red/green marks and natural CLI exit were validated on **macOS with Claude Code 2.1.210**. Linux is intended but has not been tested with a real Claude session; Windows currently supports terminal-only mode.
+
+The adapter uses `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SessionEnd`. `UserPromptSubmit` starts a review turn. Before `Edit`, `Write`, `MultiEdit` or `NotebookEdit`, the adapter records the bounded file contents; afterward it compares the actual disk contents against the first captured version in that turn. In Git projects, the existing task baseline comparison also detects shell/script and registered-worktree writes when `review.git_fallback=true`. This feeds the **same** `changes`, `diff`, `filediff`, `follow`, `code`, `turns`, `next`, `prev` and `gitdiff` interfaces as Codex, including optional Telescope search/patch preview and reading without losing follow state. `:Agent resume claude` opens Claude's native history selector after the CLI has exited.
+
+The plugin appends an inline `--settings` object only to its own CLI launch. It preserves ordinary user/project settings; if `backends.claude.command` already supplies one JSON/file `--settings`, its options and Hooks are merged in memory. That supplied file is read at launch, so later changes to it require restarting the session. User settings and project files are never rewritten by the adapter. `command[1]` must be the CLI or a wrapper that forwards the added arguments; shell wrappers that discard appended arguments are unsupported in tracking mode. The command Hook runs the configured Node executable using POSIX shell quoting, independently of interactive zsh/fish startup files.
+
+Hooks send a minimal event to a random authenticated loopback HTTP endpoint owned by this Neovim session. They do not send prompt text, tool response text, file content or credentials over this channel; the local adapter reads allowed files itself to compute patches. Transport tokens stay in process pipes/environment, not in command-line settings or saved config. The adapter does not use an Anthropic SDK/API, change models, answer approvals or replace CLI login. Hook clients print nothing and return success even if tracking is unavailable; observation errors cannot veto a Claude tool action. Snapshot work briefly delays the corresponding Hook. `claude.hook_timeout` bounds the Hook client wait (default 10 seconds); timeouts can miss a baseline or update and are reported when detectable. Hiding retains the helper; stopping, switching, wiping the terminal or leaving Neovim terminates it. Received changes remain inspectable after a natural CLI exit until explicit stop/restart.
+
+### Claude limitations and troubleshooting
+
+- **Hooks must be allowed.** Workspace trust, `disableAllHooks`, managed policy restrictions, `--bare` or `--safe-mode` can prevent observation. Explicit incompatible launch settings produce an error; global/policy restrictions may instead leave `:Agent status` at `bridge.state="waiting"`. A delayed warning suggests checking Claude's `/hooks`. The plugin does not override policy or force Hooks on. Set `claude.enabled=false` for the original terminal-only behavior.
+- **No retroactive attachment.** Tracking only covers this plugin-launched CLI and future captured edits. Starting/resuming Claude does not reconstruct old conversation patches or attach to an unrelated terminal session. Use `:Agent gitdiff` for the current tracked-file diff against HEAD, which also includes pre-existing changes.
+- **Non-Git coverage is limited to supported file tools.** Shell, custom/MCP tools, arbitrary background processes, file moves/deletions without a supported file tool, and writes without a usable pre-edit Hook require Git fallback or remain unobserved. The adapter does not currently consume Claude-specific `bashEditDiff`, filesystem `FileChanged`, or transcript logs. Notebook edits show the notebook JSON patch, not a cell-aware notebook view.
+- **Observed disk changes are not proof of authorship.** Concurrent editor/agent writes and partial writes from failed tools may appear. Subagent tool events with the parent session ID contribute to the parent turn; separate session IDs are ignored. There are no separate subagent review panes. Background writes crossing turn boundaries can be attributed to the later scan.
+- **Bounds remain in force.** Binary, oversized, out-of-scope or symlink-target files are skipped. Git fallback omits ignored files; supported direct file-tool Hooks can still capture an ignored text file within scope. Native before-images and Git snapshots are bounded separately by `review.max_snapshot_bytes`; single files/patches use `review.max_diff_bytes`. Normal history retention (20 turns by default) and historical/deleted-file read-only patches apply to Claude too.
+- Real-model validation covers a file-tool edit on macOS. Local automated fixtures additionally cover cumulative edits/reverts, failed tools, settings merging, hook authentication, session isolation, Git script/worktree changes, hide/show and cleanup. CLI versions, organizational policies and other platforms may differ; report the Claude version and `:Agent status` without credentials.
+
+Reference: [Claude Code Hooks](https://code.claude.com/docs/en/hooks) and [CLI settings](https://code.claude.com/docs/en/cli-reference).
+
 ## Configuration
 
 ```lua
@@ -212,10 +244,11 @@ require("agent").setup({
         capture_mouse = true,
     },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
+    claude = { enabled = false, node = "node", startup_timeout = 15000, hook_timeout = 10000 },
     review = { follow = true, history_limit = 20, max_diff_bytes = 2 * 1024 * 1024, restrict_to_cwd = true,
         git_fallback = true, worktrees = true, max_snapshot_bytes = 32 * 1024 * 1024 },
     backends = {
-        claude = { label = "Claude Code", command = { "claude" }, env = {} },
+        claude = { label = "Claude Code", command = { "claude" }, resume_command = { "claude", "--resume" }, env = {} },
         codex = {
             label = "Codex",
             command = { "codex" },
@@ -263,9 +296,10 @@ From the repository root, run:
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/review.lua
 nvim --headless -u NONE -l tests/bridge.lua
+nvim --headless -u NONE -l tests/claude.lua
 nvim --headless -u NONE -l tests/git-bridge.lua
 nvim --headless -u NONE -l tests/mouse.lua
-node --test tests/websocket.mjs tests/git-review.mjs
+node --test tests/websocket.mjs tests/git-review.mjs tests/claude-review.mjs tests/claude-transport.mjs
 python3 tests/ui_resize.py # development-only Python msgpack dependency
 ```
 

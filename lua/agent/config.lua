@@ -15,6 +15,7 @@ M.defaults = {
     },
     terminal = { start_insert = true, hide_key = false, show_hint = true, capture_mouse = true },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
+    claude = { enabled = false, node = "node", startup_timeout = 15000, hook_timeout = 10000 },
     review = {
         follow = true,
         picker = "auto",
@@ -26,7 +27,7 @@ M.defaults = {
         max_snapshot_bytes = 32 * 1024 * 1024,
     },
     backends = {
-        claude = { label = "Claude Code", command = { "claude" }, env = {} },
+        claude = { label = "Claude Code", command = { "claude" }, resume_command = { "claude", "--resume" }, env = {} },
         codex = { label = "Codex", command = { "codex" }, resume_command = { "codex", "resume" }, env = {} },
     },
 }
@@ -90,6 +91,14 @@ function M.resolve(opts)
         vim.tbl_contains({ "auto", "ui_select" }, result.review.picker),
         "review.picker 必须是 auto 或 ui_select"
     )
+    assert(type(result.claude.enabled) == "boolean", "claude.enabled 必须是布尔值")
+    assert(type(result.claude.node) == "string" and result.claude.node ~= "", "claude.node 必须是命令路径")
+    for _, key in ipairs({ "startup_timeout", "hook_timeout" }) do
+        assert(
+            type(result.claude[key]) == "number" and result.claude[key] >= 1000,
+            "claude." .. key .. " 至少为 1000ms"
+        )
+    end
     for _, key in ipairs({ "follow", "restrict_to_cwd", "git_fallback", "worktrees" }) do
         assert(type(result.review[key]) == "boolean", "review." .. key .. " 必须是布尔值")
     end

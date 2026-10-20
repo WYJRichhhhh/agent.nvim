@@ -143,6 +143,66 @@ Hook 向仅监听本机、随机令牌鉴权的 HTTP 服务发送精简事件，
 
 官方参考：[Claude Code Hooks](https://code.claude.com/docs/en/hooks)、[CLI 配置参数](https://code.claude.com/docs/en/cli-reference)。
 
+## 让 Agent 打开并讲解代码
+
+开启任一 `codex.enabled=true` / `claude.enabled=true` 适配器后，默认 `code.enabled=true` 会为**本次 CLI 会话**接入名为 `agent_nvim_editor` 的 stdio MCP 服务，提供 `show_code` 和 `clear_code`。不修改全局 MCP 文件、登录、模型或审批策略，也不增加 SDK 依赖。自定义后端和纯终端模式不会注入这些工具。
+
+可以直接问：
+
+> 找到订单校验的核心实现，使用 show_code 在左侧打开文件，标出关键代码并加简短说明。先不要修改文件。
+
+Agent 正常搜索/读文件后提交路径和行号。左侧打开真实文件、定位关键范围并显示行尾说明；讲解高亮使用 `AgentCodeHighlight`（默认链接 `Visual`），与修改 diff 的红绿标记区分。默认焦点及终端输入模式留在 Agent，只有第一个文件会加载；其他位置从列表选择。工具也可显式请求 `focus=true`。参数示例：
+
+```json
+{
+  "title": "订单校验",
+  "locations": [
+    {
+      "file": "src/orders.py",
+      "ranges": [
+        { "start": 42, "end": 58, "label": "派发前校验" }
+      ]
+    }
+  ],
+  "focus": false
+}
+```
+
+| 命令 / 建议键位 | 用途 |
+| --- | --- |
+| `:Agent locations` / `<leader>al` | 选择讲解文件/位置 |
+| `:Agent code` / `<leader>ae` | 聚焦当前讲解；没有讲解时聚焦所选/最近修改文件 |
+| `:Agent next` / `prev` / `<leader>an` / `ap` | 有讲解时切换关键范围/文件，否则跳转修改块 |
+| `:Agent clear` / `<leader>ac` | 清除讲解标记和位置列表 |
+| `:Agent follow` / `<leader>af` | 清除讲解并切换修改跟随 |
+
+插件不创建全局键位，按需加入 lazy.nvim 的 `keys`：
+
+```lua
+{ "<leader>al", "<cmd>Agent locations<cr>", desc = "Agent 讲解位置" },
+{ "<leader>ac", "<cmd>Agent clear<cr>", desc = "清除 Agent 讲解高亮" },
+```
+
+讲解会暂停修改跟随，避免接下来的修改立即把视图跳走。主动打开修改文件或 diff 会替换讲解。清除标记不会偷偷恢复跟随；按 `af` 可恢复。标记文件开始编辑或重新加载后会清除失效高亮；重新选择位置时再次校验。隐藏/显示保留讲解，停止/切换后端清理；CLI 自然退出后仍可查看，直到显式停止或重启。
+
+文件必须存在，默认限于启动目录和已发现的同项目注册 worktree。展示前校验文件及范围；源窗口或目标 buffer 有未保存内容时拒绝切换/重载，保留原文。目录失效、二进制/超大文件、行号越界、源窗口不可用都会返回工具错误。每个范围可提供 `expected_text`，与该范围全文精确比对（换行规范化），帮助检测读取后又变化的代码；后续位置切换也按捕获的文本验证。本机随机令牌鉴权的中继需收到 Neovim 实际响应才返回成功；会话停止、过期或无响应会返回错误。工具不暴露 shell 或写文件操作。
+
+配置：
+
+```lua
+code = {
+    enabled = true, -- 需要开启 Codex/Claude 适配器；false 不注入 MCP
+    max_locations = 20,
+    max_ranges = 50, -- 每个位置
+    max_highlight_lines = 1000, -- 每个位置
+    max_file_bytes = 2 * 1024 * 1024,
+}
+```
+
+限制：Agent 自行决定是否调用工具，需要时明确要求 `show_code`。已运行的 CLI 须正常停止后重新启动才能发现新工具；原生 MCP 权限和组织策略仍生效，出现审批时在 CLI 内处理。Claude 启动参数已有的 `--mcp-config` JSON/文件会在内存合并，不改原文件；`agent_nvim_editor` 是保留名称。Codex 使用本次 App Server 的临时配置，并向 stdio 服务透传中继环境变量。这是展示能力，不保证 Agent 判断的业务语义正确；支持普通 UTF-8 文本和从 1 开始、含末行的范围，不做 AST 位置跟踪或持久化代码导览。编辑后行号/片段可能过时；尚未实现自动发送未保存 buffer 或可视选区。
+
+验证：macOS 上真实 Claude 已完成模型调用工具、打开源文件与高亮；真实 Codex App Server 已发现两个 MCP 工具（该检查未调用模型）。两个后端的本地端到端测试覆盖 stdio/中继/UI 回执、焦点、toggle、清除、无效行号、旧片段、未保存内容及清理；真实 Neovim UI 验证了终端输入模式保持。其他 CLI/平台/策略组合仍需反馈验证。
+
 ## 单会话规则
 
 一个 Neovim 实例同时维护一个 Agent 会话。显示和隐藏复用同一终端 buffer 与进程，不会清空未提交的输入。CLI 在隐藏时仍可以继续运行任务。
@@ -262,11 +322,13 @@ Lua API 包括 `setup`、`register_backend`、`open`、`hide`、`toggle`、`focu
 ```sh
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/review.lua
+nvim --headless -u NONE -l tests/explain.lua
+nvim --headless -u NONE -l tests/editor-bridge.lua
 nvim --headless -u NONE -l tests/bridge.lua
 nvim --headless -u NONE -l tests/claude.lua
 nvim --headless -u NONE -l tests/git-bridge.lua
 nvim --headless -u NONE -l tests/mouse.lua
-node --test tests/websocket.mjs tests/git-review.mjs tests/claude-review.mjs tests/claude-transport.mjs
+node --test tests/websocket.mjs tests/git-review.mjs tests/claude-review.mjs tests/claude-transport.mjs tests/editor.mjs
 python3 tests/ui_resize.py # 仅开发测试需要 Python msgpack 包
 ```
 

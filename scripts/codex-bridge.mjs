@@ -5,10 +5,11 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { connect } from './websocket.mjs';
 import { GitReview } from './git-review.mjs';
+import { EditorServer } from './editor-server.mjs';
 
 let child, ws, stopping = false, activeThread, binding = 0, seq = 0;
 const requests = new Map();
-let gitReview, scanTimer, currentTurn, pendingTurn, scanQueued = false;
+let editor, gitReview, scanTimer, currentTurn, pendingTurn, scanQueued = false;
 function scheduleScan(turnId) {
   if (!gitReview || !gitReview.options.git_fallback || !turnId || (currentTurn && currentTurn!==turnId)) return;
   pendingTurn=turnId;
@@ -27,7 +28,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function shutdown() {
   if (stopping) return;
   stopping = true;
-  clearTimeout(scanTimer); gitReview?.close();
+  clearTimeout(scanTimer); gitReview?.close(); editor?.close();
   try { ws?.close(); } catch {}
   if (child?.pid) {
     const kill = signal => {
@@ -103,8 +104,9 @@ async function start(options) {
   const token = crypto.randomBytes(32).toString('hex');
   const hash = crypto.createHash('sha256').update(token).digest('hex');
   const endpoint = `ws://127.0.0.1:${port}`;
-  child = spawn(options.executable, ['app-server', '--listen', endpoint, '--ws-auth', 'capability-token', '--ws-token-sha256', hash], {
-    cwd: options.cwd, env: process.env, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
+  if (options.code?.enabled) editor = await new EditorServer(emit).start();
+  child = spawn(options.executable, ['app-server', '--listen', endpoint, '--ws-auth', 'capability-token', '--ws-token-sha256', hash, ...(editor?.codexArgs() ?? [])], {
+    cwd: options.cwd, env: {...process.env, ...editor?.env}, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
   });
   child.stderr.resume(); // Do not mix server diagnostics/authentication data into protocol output.
   child.on('error', () => fatal('Cannot launch Codex App Server'));
@@ -146,20 +148,21 @@ async function start(options) {
       emit({ type: 'event', method, params: {...params, turnId: params.turnId ?? params.turn?.id} });
     }
   });
-  await rpc('initialize', {clientInfo:{name:'agent_nvim',title:'agent.nvim',version:'0.3.1'}});
+  await rpc('initialize', {clientInfo:{name:'agent_nvim',title:'agent.nvim',version:'0.4.0'}});
   ws.send(JSON.stringify({method:'initialized'}));
   if (options.review?.git_fallback || options.review?.worktrees) {
     gitReview=new GitReview(options.cwd,options.review,emit);
     await gitReview.run(()=>options.review.git_fallback ? gitReview.snapshot() : gitReview.discover());
   }
-  emit({ type:'ready', endpoint, token });
+  emit({ type:'ready', endpoint, token, env: editor?.env });
 }
 let started = false;
 const input = readline.createInterface({input:process.stdin});
 input.on('line', line => {
   try {
     const message = JSON.parse(line);
-    if (message.type === 'stop') void shutdown();
+    if (message.type === 'editor_result') editor?.reply(message);
+    else if (message.type === 'stop') void shutdown();
     else if (message.type === 'start' && !started) { started = true; start(message).catch(error => fatal(error.message)); }
   } catch { fatal('Invalid bridge command'); }
 });

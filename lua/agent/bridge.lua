@@ -35,7 +35,19 @@ function M.start(session, env, ready, failure)
                 command,
                 { "--remote", value.endpoint, "--remote-auth-token-env", "AGENT_NVIM_SERVER_TOKEN" }
             )
-            ready(command, vim.tbl_extend("force", {}, env, { AGENT_NVIM_SERVER_TOKEN = value.token }))
+            ready(command, vim.tbl_extend("force", {}, env, value.env or {}, { AGENT_NVIM_SERVER_TOKEN = value.token }))
+        elseif value.type == "editor" then
+            local ok, result = pcall(require("agent.explain").request, value)
+            if not ok then
+                result = { ok = false, error = tostring(result) }
+            end
+            if not bridge.stopped then
+                pcall(
+                    vim.fn.chansend,
+                    bridge.job,
+                    vim.json.encode({ type = "editor_result", id = value.id, result = result }) .. "\n"
+                )
+            end
         elseif value.type == "thread" then
             bridge.thread_id = value.threadId
             bridge.state = value.state
@@ -89,6 +101,7 @@ function M.start(session, env, ready, failure)
         cwd = session.cwd,
         timeout = options.startup_timeout,
         review = require("agent.config").options.review,
+        code = require("agent.config").options.code,
     }) .. "\n")
 end
 

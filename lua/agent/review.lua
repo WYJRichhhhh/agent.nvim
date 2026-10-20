@@ -155,6 +155,14 @@ local function path_for(path)
     return real
 end
 
+function M.resolve_path(path)
+    return state and path_for(path) or nil
+end
+
+function M.clear_marks()
+    clear_marks()
+end
+
 -- Parse unified hunks, keeping deleted text as virtual lines above its new-file position.
 function M.hunks(diff)
     local result, current, new_line = {}, nil, nil
@@ -272,6 +280,7 @@ open_file = function(entry, focus)
         if not vim.deep_equal(disk, vim.api.nvim_buf_get_lines(buf, 0, -1, false)) then
             error("buffer 与磁盘内容不同，未覆盖 buffer；请先处理外部修改")
         end
+        require("agent.explain").clear()
         vim.api.nvim_win_set_buf(win, buf)
         local hunks = M.hunks(entry.diff)
         if hunks[1] then
@@ -570,6 +579,7 @@ function M.diff(value, root)
         notify("请先保存编辑窗口中的修改，再查看 diff。")
         return
     end
+    require("agent.explain").clear()
     state.follow = false
     refresh()
     updating = true

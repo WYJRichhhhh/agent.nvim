@@ -28,7 +28,10 @@ hook('SessionStart')
 print('READY_CLAUDE_TUI', flush=True)
 for line in sys.stdin:
     cmd = line.strip()
-    if cmd == 'begin': hook('UserPromptSubmit')
+    if cmd == 'show':
+        from editor_client import show_code
+        print('SHOW_RESULT:' + json.dumps(show_code()), flush=True)
+    elif cmd == 'begin': hook('UserPromptSubmit')
     elif cmd == 'edit': edit('after')
     elif cmd == 'edit-again': edit('after twice')
     elif cmd == 'revert': edit('before')

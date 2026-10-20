@@ -9,6 +9,8 @@ function M.highlights()
         fg = float.fg or normal.fg or (light and "#16181a" or "#ffffff"),
         bg = float.bg or normal.bg or (light and "#ffffff" or "#16181a"),
     })
+    vim.api.nvim_set_hl(0, "AgentCodeHighlight", { link = "Visual", default = true })
+    vim.api.nvim_set_hl(0, "AgentCodeLabel", { link = "DiagnosticInfo", default = true })
     vim.api.nvim_set_hl(0, "AgentBorder", { link = "FloatBorder" })
     vim.api.nvim_set_hl(0, "AgentTitle", { link = "FloatTitle" })
 end

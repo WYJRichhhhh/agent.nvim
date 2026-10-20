@@ -16,6 +16,13 @@ M.defaults = {
     terminal = { start_insert = true, hide_key = false, show_hint = true, capture_mouse = true },
     codex = { enabled = false, node = "node", startup_timeout = 15000 },
     claude = { enabled = false, node = "node", startup_timeout = 15000, hook_timeout = 10000 },
+    code = {
+        enabled = true,
+        max_locations = 20,
+        max_ranges = 50,
+        max_highlight_lines = 1000,
+        max_file_bytes = 2 * 1024 * 1024,
+    },
     review = {
         follow = true,
         picker = "auto",
@@ -106,6 +113,13 @@ function M.resolve(opts)
         assert(
             type(result.review[key]) == "number" and result.review[key] >= 1 and result.review[key] % 1 == 0,
             "review." .. key .. " 必须是正整数"
+        )
+    end
+    assert(type(result.code.enabled) == "boolean", "code.enabled 必须是布尔值")
+    for _, key in ipairs({ "max_locations", "max_ranges", "max_highlight_lines", "max_file_bytes" }) do
+        assert(
+            type(result.code[key]) == "number" and result.code[key] >= 1 and result.code[key] % 1 == 0,
+            "code." .. key .. " 必须是正整数"
         )
     end
     for name, backend in pairs(result.backends) do

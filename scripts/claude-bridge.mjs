@@ -6,8 +6,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import { ClaudeReview, augmentCommand } from './claude-review.mjs';
+import { EditorServer, claudeEditorCommand } from './editor-server.mjs';
 
-let server, review, hookTimer, startupTimer, stopping = false, started = false, queue = Promise.resolve();
+let editor, server, review, hookTimer, startupTimer, stopping = false, started = false, queue = Promise.resolve();
 const emit = value => { if (!stopping) process.stdout.write(JSON.stringify(value) + '\n'); };
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 function shutdown() {
@@ -16,6 +17,7 @@ function shutdown() {
   clearTimeout(hookTimer);
   clearTimeout(startupTimer);
   review?.close();
+  editor?.close();
   server?.closeAllConnections();
   server?.close();
   process.exit(0);
@@ -66,10 +68,15 @@ async function start(options) {
   for (const event of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd']) {
     hooks[event] = [{ hooks: [{ type: 'command', command: hookCommand, timeout: Math.ceil(options.hook_timeout / 1000) + 1 }] }];
   }
-  const command = await augmentCommand(options.command, hooks, options.cwd);
+  let command = await augmentCommand(options.command, hooks, options.cwd);
+  if (options.code?.enabled) {
+    editor = await new EditorServer(emit).start();
+    command = await claudeEditorCommand(command, editor.mcp, options.cwd);
+  }
   clearTimeout(startupTimer);
   hookTimer = setTimeout(() => emit({ type: 'warning', message: 'Claude Hooks have not connected yet. Accept workspace trust and check /hooks, disableAllHooks and managed policy; the terminal continues without tracked edits until hooks run.' }), options.timeout);
   emit({ type: 'ready', state: 'waiting', command, env: {
+    ...editor?.env,
     AGENT_NVIM_CLAUDE_ENDPOINT: `http://127.0.0.1:${server.address().port}/hook`,
     AGENT_NVIM_CLAUDE_TOKEN: token,
     AGENT_NVIM_CLAUDE_TIMEOUT: String(options.hook_timeout),
@@ -79,6 +86,7 @@ const input = readline.createInterface({ input: process.stdin });
 input.on('line', line => {
   try {
     const value = JSON.parse(line);
+    if (value.type === 'editor_result') editor?.reply(value);
     if (value.type === 'stop') shutdown();
     if (value.type === 'start' && !started) {
       started = true;

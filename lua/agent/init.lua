@@ -5,6 +5,7 @@ local window = require("agent.window")
 local bridge = require("agent.bridge")
 local review = require("agent.review")
 local mouse = require("agent.mouse")
+local explain = require("agent.explain")
 local session, selected, selecting
 local generation = 0
 local installed = false
@@ -42,6 +43,7 @@ local function discard()
     session = nil
     bridge.stop(old)
     mouse.release()
+    explain.close()
     review.close()
     window.hide(old)
     if vim.api.nvim_buf_is_valid(old.bufnr) then
@@ -149,6 +151,7 @@ local function launch(name, cwd, command_override)
     end
     if (name == "codex" or name == "claude") and config.options[name].enabled then
         review.attach(current, config.options.review)
+        explain.attach(current, config.options.code)
         bridge.start(current, env, spawn_terminal, function(message)
             if session ~= current or current.stopping then
                 return
@@ -241,6 +244,7 @@ local function ensure_hooks()
             local old = session
             bridge.stop(old)
             mouse.release()
+            explain.close()
             review.close()
             session = nil
             if old.job_id and old.state == "running" then
@@ -439,6 +443,9 @@ function M.gitdiff()
 end
 
 function M.code()
+    if explain.focus() then
+        return
+    end
     review.code()
 end
 
@@ -453,6 +460,7 @@ function M.diff()
     review.diff()
 end
 function M.follow()
+    explain.clear()
     review.follow()
 end
 function M.pause()
@@ -462,10 +470,23 @@ function M.turns()
     review.turns()
 end
 function M.next()
+    if explain.jump(1) then
+        return
+    end
     review.jump(1)
 end
 function M.prev()
+    if explain.jump(-1) then
+        return
+    end
     review.jump(-1)
+end
+
+function M.locations()
+    explain.locations()
+end
+function M.clear()
+    explain.clear()
 end
 
 function M.help()
@@ -487,6 +508,7 @@ function M.status()
         visible = window.find(session) ~= nil,
         bridge = session.bridge and { state = session.bridge.state, thread_id = session.bridge.thread_id } or nil,
         review = review.status(),
+        code = explain.status(),
     }
 end
 

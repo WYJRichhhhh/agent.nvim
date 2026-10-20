@@ -146,6 +146,39 @@ Hook 客户端静默失败不阻止 Claude；超时可能漏报。CLI 自然退�
     claude.startup_timeout  15000，启动超时/未收到 Hooks 时提示的等待毫秒数
     claude.hook_timeout     10000，每次 Hook 客户端最长等待毫秒数
 
+代码讲解                                               *agent.nvim-code*
+
+开启 Codex/Claude 修改适配器后，code.enabled 默认 true；本次启动向 CLI 接入
+agent_nvim_editor MCP，提供 show_code / clear_code，不修改全局 MCP 配置。
+可以问：「使用 show_code 在左侧打开业务核心代码，标记关键行，先不要修改文件。」
+
+show_code 接受 locations 数组，每项有 file 和 ranges；每个范围含从 1 开始的
+start/end（含末行）、可选 label 和 expected_text（该范围全文）。只加载首文件，
+其他位置从列表选择。讲解高亮链接 Visual，与修改 diff 红绿区别；焦点默认留在
+Agent，工具可显式 focus=true。讲解会暂停修改跟随，防止视图立即跳走。
+
+    :Agent locations        选择讲解位置（建议 <leader>al）
+    :Agent clear            清除讲解高亮和列表（建议 <leader>ac）
+    :Agent code             优先聚焦当前讲解，否则聚焦修改文件
+    :Agent next / prev      有讲解时导航关键范围/文件，否则导航修改块
+    :Agent follow           清除讲解并切换修改跟随
+
+源码窗口/目标 buffer 未保存、范围越界、片段过期、范围外/不存在/二进制/过大文件
+会返回工具错误，不覆盖内容。编辑/重载标记文件会清除过时高亮；再次导航会校验。
+隐藏保留讲解，显式停止或切换清理；自然退出保留。clear 不自动恢复修改跟随。
+所有讲解键须在 Neovim 普通模式使用，终端输入时先 Ctrl-\、Ctrl-n。
+
+工具需要新启动的 CLI 才能发现；原生 MCP 权限/组织策略仍生效，按 CLI 提示审批。
+Agent 决定是否调用工具，必要时明确要求 show_code；不保证业务语义判断正确。
+自定义/纯终端后端不注入；尚无 AST 跟踪、历史导览或自动发送未保存 buffer/选区。
+详细架构、验证和限制见中英文 README 的代码讲解章节。
+
+    code.enabled            true，开启会话 MCP（需 Codex/Claude 适配器）
+    code.max_locations      20，每次展示的位置数量上限
+    code.max_ranges         50，每个位置的范围数上限
+    code.max_highlight_lines 1000，每个位置累计高亮行数上限
+    code.max_file_bytes     2097152，最大文件字节数
+
 配置                                                   *agent.nvim-setup*
 >
     require('agent').setup({

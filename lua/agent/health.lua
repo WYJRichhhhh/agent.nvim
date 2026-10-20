@@ -54,6 +54,11 @@ function M.check()
             end
         end
     end
+    if require("agent.config").options.code.enabled then
+        vim.health.info(
+            "代码讲解使用 agent_nvim_editor 会话 MCP；需开启 Codex/Claude 适配器并允许原生 MCP 工具。:Agent locations 查看位置，:Agent clear 清除。"
+        )
+    end
     vim.health.info("登录状态由原生 CLI 管理。这里只检查可执行文件，不读取认证信息。")
 end
 return M

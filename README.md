@@ -223,6 +223,66 @@ Hooks send a minimal event to a random authenticated loopback HTTP endpoint owne
 
 Reference: [Claude Code Hooks](https://code.claude.com/docs/en/hooks) and [CLI settings](https://code.claude.com/docs/en/cli-reference).
 
+## Ask the Agent to show and explain code
+
+With either `codex.enabled=true` or `claude.enabled=true`, `code.enabled=true` (default) registers a **session-only stdio MCP server** named `agent_nvim_editor`. It exposes `show_code` and `clear_code` to the native CLI. No global MCP files, SDKs, credentials, models or approval policies are changed. Custom/direct-terminal backends do not receive these tools.
+
+Try asking the Agent:
+
+> Find the core implementation of order validation. Use show_code to open it in the left Neovim editor and highlight the key lines with short explanations. Do not modify files.
+
+The Agent reads/searches normally, then calls `show_code` with locations, 1-based inclusive ranges, and optional labels. The first file opens in the original source window, with `AgentCodeHighlight` (linked to `Visual`) and line-end labels; edit diffs keep their separate red/green styling. Default focus stays in the terminal and preserves terminal input mode. Only the first file loads; the other locations are available in a list. A tool can explicitly request `focus=true`. Example arguments:
+
+```json
+{
+  "title": "Order validation",
+  "locations": [
+    {
+      "file": "src/orders.py",
+      "ranges": [
+        { "start": 42, "end": 58, "label": "Validate before dispatch" }
+      ]
+    }
+  ],
+  "focus": false
+}
+```
+
+| Command / suggested key | Action |
+| --- | --- |
+| `:Agent locations` / `<leader>al` | Pick an explanation file/location |
+| `:Agent code` / `<leader>ae` | Focus the active explanation; otherwise the selected/latest edited file |
+| `:Agent next` / `prev` / `<leader>an` / `ap` | Navigate explanation ranges/files while an explanation is active; otherwise navigate edit hunks |
+| `:Agent clear` / `<leader>ac` | Clear explanation marks and its location list |
+| `:Agent follow` / `<leader>af` | Clear the explanation and toggle edit following |
+
+Suggested mappings (the plugin creates no global mappings):
+
+```lua
+{ "<leader>al", "<cmd>Agent locations<cr>", desc = "Agent code locations" },
+{ "<leader>ac", "<cmd>Agent clear<cr>", desc = "Clear Agent explanation" },
+```
+
+Showing code pauses edit following so later edits cannot immediately replace the explanation. Explicitly opening an edit diff or changed source replaces the explanation. Clearing marks does not silently resume following. Editing/reloading a marked buffer invalidates its marks; selecting an old location validates it again. Hide/show preserves the explanation; stop/switch clears it. CLI natural exit leaves the explanation available until explicit stop/restart.
+
+Files must exist within the configured review scope (launch directory and discovered registered worktrees by default). All requested file/range metadata is validated before presentation. Unsaved source-window or target buffers are refused; the user keeps their contents. Missing/binary/oversized files, invalid line numbers, unavailable source windows and stale code return tool errors. An optional `expected_text` on each range must exactly match that range (newlines normalized); it helps detect code that changed since the Agent read it. Later navigation uses captured text checks too. A local authenticated loopback relay waits for Neovim's actual response before reporting success; stopped/expired/unresponsive sessions return errors. No shell execution or file-write operation is exposed by these tools.
+
+Configuration:
+
+```lua
+code = {
+    enabled = true, -- requires an enabled Codex/Claude adapter; false disables MCP injection
+    max_locations = 20,
+    max_ranges = 50, -- per location
+    max_highlight_lines = 1000, -- per location
+    max_file_bytes = 2 * 1024 * 1024,
+}
+```
+
+Limitations: the Agent chooses whether to call a tool; ask explicitly for `show_code` when needed. Existing running CLI sessions need a normal stop/restart to discover the tools. Native CLI MCP permissions/organization policies still apply; approve through the CLI when prompted. Claude's launch-time `--mcp-config` JSON/files are merged in memory without changing them; the name `agent_nvim_editor` is reserved. Codex receives temporary App Server config overrides and forwards only the relay environment variables to its stdio server. This is editor presentation, not semantic proof that the chosen code implements the behavior. Ordinary UTF-8 text and 1-based line ranges are supported; no AST-aware range tracking or persistent code tours. Locations can become stale while the Agent/user edits. No automatic transfer of an unsaved buffer or visual selection is implemented.
+
+Validation: real Claude discovery and model-triggered display/highlights passed on macOS; real Codex App Server discovered both MCP tools without inference. Local end-to-end fixtures exercise both backends, the stdio/relay/UI acknowledgement, focus, toggle, clear, invalid ranges, stale text, unsaved buffers and cleanup. A real attached Neovim UI test also verified terminal input mode is retained. These are distinct from validating every CLI/platform/policy combination.
+
 ## Configuration
 
 ```lua
@@ -274,7 +334,7 @@ require("agent").register_backend("local_agent", {
 
 Then run `:Agent start local_agent`. Commands and resume commands must be nonempty argv lists. A backend may be another interactive executable; its TUI compatibility should be checked in your environment.
 
-Lua API: `setup`, `register_backend`, `open`, `hide`, `toggle`, `focus`, `start`, `resume`, `stop`, `select`, `status`, `help`, `changes`, `diff`, `filediff`, `follow`, `pause`, `code`, `turns`, `next`, `prev`, `gitdiff`.
+Lua API: `setup`, `register_backend`, `open`, `hide`, `toggle`, `focus`, `start`, `resume`, `stop`, `select`, `status`, `help`, `changes`, `diff`, `filediff`, `follow`, `pause`, `code`, `turns`, `next`, `prev`, `gitdiff`, `locations`, `clear`.
 
 User events: `AgentStart` and `AgentExit`, with backend, directory, buffer and exit-code information in event data. Editor lifecycle is managed independently of the CLI's conversation history.
 
@@ -295,11 +355,13 @@ From the repository root, run:
 ```sh
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/review.lua
+nvim --headless -u NONE -l tests/explain.lua
+nvim --headless -u NONE -l tests/editor-bridge.lua
 nvim --headless -u NONE -l tests/bridge.lua
 nvim --headless -u NONE -l tests/claude.lua
 nvim --headless -u NONE -l tests/git-bridge.lua
 nvim --headless -u NONE -l tests/mouse.lua
-node --test tests/websocket.mjs tests/git-review.mjs tests/claude-review.mjs tests/claude-transport.mjs
+node --test tests/websocket.mjs tests/git-review.mjs tests/claude-review.mjs tests/claude-transport.mjs tests/editor.mjs
 python3 tests/ui_resize.py # development-only Python msgpack dependency
 ```
 

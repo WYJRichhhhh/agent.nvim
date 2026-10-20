@@ -21,7 +21,7 @@ local ok, err = xpcall(function()
             backends = {
                 codex = {
                     command = { vim.fn.getcwd() .. "/tests/fixtures/fake_codex.py" },
-                    env = { AGENT_TEST_NODE = vim.fn.exepath("node") },
+                    env = { AGENT_TEST_NODE = vim.fn.exepath("node"), AGENT_TEST_REQUIRE_POLICY = "1" },
                 },
                 claude = {
                     command = {

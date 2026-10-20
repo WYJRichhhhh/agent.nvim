@@ -209,10 +209,21 @@ local function ensure_hooks()
     end
     installed = true
     local group = vim.api.nvim_create_augroup("AgentNvim", { clear = true })
+    local mouse_pending = false
     vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "TermEnter" }, {
         group = group,
         callback = function()
             mouse.update(session)
+            -- Setting a background window's buffer temporarily changes the current
+            -- buffer for BufEnter, without a matching event when context is restored.
+            -- Reconcile against the real focus after nested window/buffer work ends.
+            if not mouse_pending then
+                mouse_pending = true
+                vim.schedule(function()
+                    mouse_pending = false
+                    mouse.update(session)
+                end)
+            end
         end,
     })
     vim.api.nvim_create_autocmd("ColorScheme", {
@@ -324,6 +335,37 @@ function M.focus()
         M.hide()
     else
         M.open()
+    end
+end
+
+-- Return to the existing editor without changing its buffer or the Agent window.
+function M.editor()
+    if not session then
+        return
+    end
+    local agent_win = window.find(session)
+    local target = session.return_win
+    local function usable(win)
+        return win and vim.api.nvim_win_is_valid(win)
+            and win ~= agent_win
+            and vim.api.nvim_win_get_tabpage(win) == vim.api.nvim_get_current_tabpage()
+            and vim.api.nvim_win_get_config(win).relative == ""
+            and vim.bo[vim.api.nvim_win_get_buf(win)].buftype == ""
+    end
+    if not usable(target) then
+        target = nil
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+            if usable(win) then
+                target = win
+                break
+            end
+        end
+    end
+    if target then
+        vim.cmd.stopinsert()
+        vim.api.nvim_set_current_win(target)
+    else
+        warn("当前标签页没有可返回的代码窗口")
     end
 end
 

@@ -1,5 +1,6 @@
 // Minimal stdio MCP server. Protocol messages only on stdout; no SDK or login.
 import http from 'node:http';
+import { presentationPolicy } from './editor-policy.mjs';
 const range = { type: 'object', additionalProperties: false, properties: {
   start: { type: 'integer', minimum: 1, description: 'First line, 1-based' },
   end: { type: 'integer', minimum: 1, description: 'Last line, inclusive; omit for one line' },
@@ -7,7 +8,7 @@ const range = { type: 'object', additionalProperties: false, properties: {
   expected_text: { type: 'string', description: 'Optional exact text of this entire range; rejects stale line numbers' },
 }, required: ['start'] };
 const tools = [
-  { name: 'show_code', description: 'Open existing source files in the left Neovim editor and highlight key lines while explaining code. Use when the user asks to locate, open, show or explain an implementation. Read files first, use accurate 1-based ranges and preferably expected_text. No file edits. Only the first location opens; the user can browse the others. Keeps Agent focus by default; refuses unsaved buffers. Automatic edit-following pauses to keep the explanation visible.', inputSchema: {
+  { name: 'show_code', description: presentationPolicy + ' Opens existing source in Neovim and highlights key lines without editing files. Only the first location opens; the user can browse the others. Refuses unsaved buffers. Automatic edit-following pauses to keep the explanation visible.', inputSchema: {
     type: 'object', additionalProperties: false, required: ['locations'], properties: {
       title: { type: 'string', maxLength: 200 },
       focus: { type: 'boolean', default: false },
@@ -45,7 +46,7 @@ async function handle(message) {
   if (message.method === 'initialize') return reply({
     protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18'].includes(message.params?.protocolVersion) ? message.params.protocolVersion : '2024-11-05',
     capabilities: { tools: {} }, serverInfo: { name: 'agent.nvim editor', version: '0.4.0' },
-    instructions: 'When asked to show or explain source code, read the code and use show_code to display key lines in Neovim. Do not modify files merely to highlight them.',
+    instructions: presentationPolicy,
   });
   if (message.method === 'ping') return reply({});
   if (message.method === 'tools/list') return reply({ tools });

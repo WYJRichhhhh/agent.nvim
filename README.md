@@ -374,3 +374,11 @@ To uninstall, stop the Agent and remove the plugin spec. There are no plugin-own
 ## License
 
 [MIT](LICENSE).
+
+Use `:Agent editor` to return focus to the existing code window without hiding the Agent or changing the code view. Map it in both normal and terminal mode, for example `{ "<M-e>", "<cmd>Agent editor<CR>", mode = { "n", "t" }, desc = "Focus editor" }`.
+
+Code explanations use a proactive MCP instruction: for repository-specific implementation, location, and behavior questions (including follow-ups), the agent is asked to read source, call `show_code`, then explain it, without requiring the user to name the tool. This is model guidance, not an enforced hook: the model may still skip the call or require permission under its normal MCP policy. Existing sessions need to restart to receive the updated tool instructions.
+
+For Codex, agent.nvim additionally appends the presentation workflow to `developer_instructions` on its private App Server, where native TUI sessions are created. Codex resolves the existing instructions through `config/read` (including explicit `-c` config overrides), then the plugin preserves that text and appends its own rules for this session. No global or project instruction files are modified. Restart Neovim and start a new Agent session after updating; an already running process does not receive new launch rules. Project tours such as “帮我来了解 manor-server的项目代码 从入口开始” are explicitly covered. Claude currently receives the MCP tool/server guidance, without this Codex-specific session override.
+
+Codex App Server does not accept the CLI `--profile` flag; this instruction merge preserves the configuration resolved by App Server and forwarded `-c` overrides, not a separate TUI-only profile.

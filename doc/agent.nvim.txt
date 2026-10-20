@@ -43,6 +43,7 @@ Alt-a 只负责显示/隐藏，不会重新弹出后端菜单。
     :Agent hide             隐藏窗口，进程继续运行
     :Agent toggle           按窗口可见性切换
     :Agent focus            不在 Agent 时聚焦，已经聚焦时隐藏
+    :Agent editor           返回代码窗口，保留 Agent 面板、会话和代码视图
     :Agent select           选择后端，切换运行中的后端前要求确认
     :Agent stop             停止进程并清理 buffer
     :Agent status           查看后端、目录、job 和显示状态
@@ -214,5 +215,16 @@ i 返回输入。原生 CLI 的历史仍由其自身滚动功能管理。
     同后端 :Agent resume 优先沿用原启动目录。
     插件直接执行命令参数数组，不启动 shell、不读取 shell rc 或别名。
     注册后端、环境变量与详细配置见 README.md / README.zh-CN.md。
+
+
+主动代码展示
+MCP 服务和 show_code 工具说明要求：代码定位、实现讲解、原因分析及相关追问，
+先读源码，再展示关键行，最后讲解；无需用户输入工具名。普通任务不会逐次展示。
+这是模型指引，无法保证每次调用；用户要求不切换时应保持视图。更新后重启会话。
+
+Codex 还会向插件自有 App Server 追加 developer_instructions 展示规则：通过 config/read
+解析并保留已有指令后追加，不修改全局配置或项目文件。项目导览（如“从入口开始
+了解项目代码”）也要求先展示入口。更新插件后重启 Neovim，开启新会话。
+Claude 目前使用 MCP 指引，不使用此 Codex 专属会话覆盖。
 
 vim:tw=78:ts=4:ft=help:norl:

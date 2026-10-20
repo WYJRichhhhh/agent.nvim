@@ -2,6 +2,13 @@
 """A local protocol fixture, never calls a model or reads login credentials."""
 import json, os, sys, urllib.request, subprocess
 from pathlib import Path
+if len(sys.argv)>1 and sys.argv[1]=='app-server' and '--listen' not in sys.argv:
+    for line in sys.stdin:
+        value=json.loads(line)
+        if value.get('id') is not None:
+            result={'config':{'developer_instructions':'fixture existing rules'}} if value.get('method')=='config/read' else {}
+            print(json.dumps({'id':value['id'],'result':result}),flush=True)
+    sys.exit(0)
 if len(sys.argv)>1 and sys.argv[1]=='app-server':
     sys.exit(subprocess.call([os.environ.get('AGENT_TEST_NODE','node'),str(Path(__file__).with_name('fake_app_server.mjs')),*sys.argv[2:]]))
 endpoint=sys.argv[sys.argv.index('--remote')+1].replace('ws:','http:')

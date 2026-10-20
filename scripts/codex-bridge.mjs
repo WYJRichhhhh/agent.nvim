@@ -6,10 +6,11 @@ import readline from 'node:readline';
 import { connect } from './websocket.mjs';
 import { GitReview } from './git-review.mjs';
 import { EditorServer } from './editor-server.mjs';
+import { codexConfigArgs, withCodexPresentation, readCodexDeveloperInstructions } from './editor-policy.mjs';
 
 let child, ws, stopping = false, activeThread, binding = 0, seq = 0;
 const requests = new Map();
-let editor, gitReview, scanTimer, currentTurn, pendingTurn, scanQueued = false;
+let configAbort, editor, gitReview, scanTimer, currentTurn, pendingTurn, scanQueued = false;
 function scheduleScan(turnId) {
   if (!gitReview || !gitReview.options.git_fallback || !turnId || (currentTurn && currentTurn!==turnId)) return;
   pendingTurn=turnId;
@@ -28,6 +29,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function shutdown() {
   if (stopping) return;
   stopping = true;
+  configAbort?.abort();
   clearTimeout(scanTimer); gitReview?.close(); editor?.close();
   try { ws?.close(); } catch {}
   if (child?.pid) {
@@ -104,8 +106,16 @@ async function start(options) {
   const token = crypto.randomBytes(32).toString('hex');
   const hash = crypto.createHash('sha256').update(token).digest('hex');
   const endpoint = `ws://127.0.0.1:${port}`;
-  if (options.code?.enabled) editor = await new EditorServer(emit).start();
-  child = spawn(options.executable, ['app-server', '--listen', endpoint, '--ws-auth', 'capability-token', '--ws-token-sha256', hash, ...(editor?.codexArgs() ?? [])], {
+  let presentationArgs = [];
+  if (options.code?.enabled) {
+    configAbort = new AbortController();
+    const existing = await readCodexDeveloperInstructions(options.executable, options.command ?? [options.executable], options.cwd, options.timeout, configAbort.signal);
+    configAbort = undefined;
+    if (stopping) return;
+    presentationArgs = withCodexPresentation([options.executable], existing).slice(1);
+    editor = await new EditorServer(emit).start();
+  }
+  child = spawn(options.executable, ['app-server', '--listen', endpoint, '--ws-auth', 'capability-token', '--ws-token-sha256', hash, ...codexConfigArgs(options.command ?? [options.executable]), ...presentationArgs, ...(editor?.codexArgs() ?? [])], {
     cwd: options.cwd, env: {...process.env, ...editor?.env}, detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
   });
   child.stderr.resume(); // Do not mix server diagnostics/authentication data into protocol output.

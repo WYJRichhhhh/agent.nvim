@@ -7,6 +7,12 @@ import { promisify } from 'node:util';
 const exec=promisify(execFile);
 const arg=name=>process.argv[process.argv.indexOf(name)+1];
 const url=new URL(arg('--listen')), hash=arg('--ws-token-sha256');
+if (process.env.AGENT_TEST_REQUIRE_POLICY === '1') {
+ const value = process.argv.find(a => a.startsWith('developer_instructions='));
+ if (!value) throw new Error('Missing session presentation policy');
+ const rules = JSON.parse(value.slice('developer_instructions='.length));
+ if (!rules.includes('fixture existing rules') || !rules.includes('show_code BEFORE')) throw new Error('Session policy did not preserve existing rules');
+}
 const sockets=new Set();let attempts=0,wrongAnswers=0;
 const thread={id:'fixture-thread',source:'cli'};
 const diff='diff --git a/sample.txt b/sample.txt\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-before\n+after\n';

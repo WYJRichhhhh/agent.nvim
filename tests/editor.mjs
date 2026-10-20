@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { codexConfigArgs, withCodexPresentation } from '../scripts/editor-policy.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -51,4 +52,20 @@ test('Editor timeout and closing reject pending requests instead of claiming UI 
     assert.equal(value.result.isError, true);
     assert.ok(value.result.content[0].text.includes('timeout'));
   } finally { server.close(); c.lines.close(); c.child.kill(); }
+});
+
+test('Codex session rules append existing instructions and preserve CLI prompt boundaries', () => {
+  const command = ['codex', '-p', 'work', '--config', 'developer_instructions="keep me"', '--config=model="chosen"', '--', '帮我来了解 manor-server的项目代码 从入口开始'];
+  assert.deepEqual(codexConfigArgs(command), ['--config', 'developer_instructions="keep me"', '--config=model="chosen"']);
+  const merged = withCodexPresentation(command, 'existing project rules');
+  const index = merged.indexOf('-c');
+  const value = JSON.parse(merged[index + 1].slice('developer_instructions='.length));
+  assert.ok(value.startsWith('existing project rules\n\n'));
+  assert.ok(value.includes('manor-server'));
+  assert.ok(value.includes('show_code BEFORE'));
+  assert.deepEqual(merged.slice(-2), command.slice(-2));
+  assert.deepEqual(command.slice(-2), ['--', '帮我来了解 manor-server的项目代码 从入口开始']);
+  assert.ok(index < merged.indexOf('--'));
+  assert.deepEqual(codexConfigArgs(['codex', '--', '-c', 'not a config']), []);
+  assert.throws(() => withCodexPresentation(command, {}), /Invalid/);
 });

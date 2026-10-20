@@ -30,11 +30,17 @@ function M.start(session, env, ready, failure)
                 ready(value.command, vim.tbl_extend("force", {}, env, value.env))
                 return
             end
-            local command = vim.deepcopy(session.command)
-            vim.list_extend(
-                command,
-                { "--remote", value.endpoint, "--remote-auth-token-env", "AGENT_NVIM_SERVER_TOKEN" }
-            )
+            local command = vim.deepcopy(value.command or session.command)
+            local separator = #command + 1
+            for i, arg in ipairs(command) do
+                if arg == "--" then
+                    separator = i
+                    break
+                end
+            end
+            for i, arg in ipairs({ "--remote", value.endpoint, "--remote-auth-token-env", "AGENT_NVIM_SERVER_TOKEN" }) do
+                table.insert(command, separator + i - 1, arg)
+            end
             ready(command, vim.tbl_extend("force", {}, env, value.env or {}, { AGENT_NVIM_SERVER_TOKEN = value.token }))
         elseif value.type == "editor" then
             local ok, result = pcall(require("agent.explain").request, value)
